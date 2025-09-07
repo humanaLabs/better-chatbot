@@ -59,3 +59,8 @@ local-data
 .mcp-config.json
 openai-compatible.config.ts
 certificates
+
+# MCP Local Agent
+mcp-local-agent/node_modules/
+mcp-local-agent/dist/
+mcp-local-agent/logs/
