@@ -28,6 +28,7 @@ import { BASE_URL, IS_MCP_SERVER_REMOTE_ONLY, IS_VERCEL_ENV } from "lib/const";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { PgOAuthClientProvider } from "./pg-oauth-provider";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { CustomTransport } from "./custom-transport";
 
 type ClientOptions = {
   autoDisconnectSeconds?: number;
@@ -196,27 +197,43 @@ export class MCPClient {
 
       // Create appropriate transport based on server config type
       if (isMaybeStdioConfig(this.serverConfig)) {
-        // Skip stdio transport
-        if (IS_MCP_SERVER_REMOTE_ONLY) {
-          throw new Error("VERCEL: Stdio transport is not supported");
-        }
-
         const config = MCPStdioConfigZodSchema.parse(this.serverConfig);
-        this.transport = new StdioClientTransport({
-          command: config.command,
-          args: config.args,
-          // Merge process.env with config.env, ensuring PATH is preserved and filtering out undefined values
-          env: Object.entries({ ...process.env, ...config.env }).reduce(
-            (acc, [key, value]) => {
-              if (value !== undefined) {
-                acc[key] = value;
-              }
-              return acc;
-            },
-            {} as Record<string, string>,
-          ),
-          cwd: process.cwd(),
-        });
+
+        if (IS_MCP_SERVER_REMOTE_ONLY) {
+          // Use CustomTransport for Vercel environment
+          this.logger.info("Using CustomTransport for Vercel environment");
+          this.transport = new CustomTransport(
+            config.command,
+            config.args,
+            // Merge process.env with config.env, ensuring PATH is preserved and filtering out undefined values
+            Object.entries({ ...process.env, ...config.env }).reduce(
+              (acc, [key, value]) => {
+                if (value !== undefined) {
+                  acc[key] = value;
+                }
+                return acc;
+              },
+              {} as Record<string, string>,
+            ),
+          );
+        } else {
+          // Use StdioClientTransport for local development
+          this.transport = new StdioClientTransport({
+            command: config.command,
+            args: config.args,
+            // Merge process.env with config.env, ensuring PATH is preserved and filtering out undefined values
+            env: Object.entries({ ...process.env, ...config.env }).reduce(
+              (acc, [key, value]) => {
+                if (value !== undefined) {
+                  acc[key] = value;
+                }
+                return acc;
+              },
+              {} as Record<string, string>,
+            ),
+            cwd: process.cwd(),
+          });
+        }
 
         await withTimeout(
           client.connect(this.transport, {
