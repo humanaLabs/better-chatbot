@@ -29,6 +29,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { PgOAuthClientProvider } from "./pg-oauth-provider";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CustomTransport } from "./custom-transport";
+import { PlaywrightWebServerTransport } from "./playwright-webserver-transport";
 
 type ClientOptions = {
   autoDisconnectSeconds?: number;
@@ -199,7 +200,27 @@ export class MCPClient {
       if (isMaybeStdioConfig(this.serverConfig)) {
         const config = MCPStdioConfigZodSchema.parse(this.serverConfig);
 
-        if (IS_MCP_SERVER_REMOTE_ONLY) {
+        // Check if this is a Playwright MCP server that should use webserver transport
+        const isPlaywrightMCP =
+          config.args?.some(
+            (arg) =>
+              arg.includes("@playwright/mcp") || arg.includes("playwright-mcp"),
+          ) || false;
+
+        if (isPlaywrightMCP && config.env?.PLAYWRIGHT_WEBSERVER_URL) {
+          // Use PlaywrightWebServerTransport for Playwright MCP via webserver
+          this.logger.info(
+            "Using PlaywrightWebServerTransport for Playwright MCP",
+          );
+          this.transport = new PlaywrightWebServerTransport(
+            config.env.PLAYWRIGHT_WEBSERVER_URL,
+            {
+              headers: config.env.PLAYWRIGHT_HEADERS
+                ? JSON.parse(config.env.PLAYWRIGHT_HEADERS)
+                : undefined,
+            },
+          );
+        } else if (IS_MCP_SERVER_REMOTE_ONLY) {
           // Use CustomTransport for Vercel environment
           this.logger.info("Using CustomTransport for Vercel environment");
           this.transport = new CustomTransport(
