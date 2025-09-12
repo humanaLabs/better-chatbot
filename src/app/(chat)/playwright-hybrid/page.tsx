@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,12 +22,12 @@ export default function PlaywrightHybridPage() {
   const [testResult, setTestResult] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [executionLog, setExecutionLog] = useState<string[]>([]);
-  const [isWebViewReady, setIsWebViewReady] = useState(false);
+  const [isBrowserReady, setIsBrowserReady] = useState(false);
   const [isMcpConnected, setIsMcpConnected] = useState(false);
   const [availableTools, setAvailableTools] = useState<string[]>([]);
-  const [mcpMode, setMcpMode] = useState<"none" | "mock" | "real">("none");
+  const [, setMcpMode] = useState<"none" | "mock" | "real">("none");
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Removido: não precisamos mais de iframe
 
   // Adicionar log
   const addLog = (message: string) => {
@@ -35,56 +35,15 @@ export default function PlaywrightHybridPage() {
     setExecutionLog((prev) => [...prev, `[${timestamp}] ${message}`]);
   };
 
-  // Executar comando direto no WebView (para sincronização)
-  const executeCommandInWebView = (
-    command: string,
-    selector?: string,
-    text?: string,
-  ): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      if (!iframeRef.current?.contentWindow) {
-        reject(new Error("WebView não acessível"));
-        return;
-      }
+  // Removido: não precisamos mais de WebView - tudo acontece no navegador real
 
-      const messageId = `webview_${Date.now()}_${Math.random()}`;
-
-      const handleMessage = (event: MessageEvent) => {
-        if (
-          event.data?.type === "WEBVIEW_RESULT" &&
-          event.data?.id === messageId
-        ) {
-          window.removeEventListener("message", handleMessage);
-          resolve(event.data.result);
-        }
-      };
-
-      window.addEventListener("message", handleMessage);
-
-      // Timeout de 3 segundos para sincronização
-      setTimeout(() => {
-        window.removeEventListener("message", handleMessage);
-        reject(new Error("Timeout na sincronização WebView"));
-      }, 3000);
-
-      // Enviar comando para o WebView
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "WEBVIEW_COMMAND",
-          id: messageId,
-          command: command,
-          selector: selector,
-          text: text,
-        },
-        "*",
-      );
-    });
-  };
-
-  // Conectar ao servidor MCP Playwright
+  // Conectar ao Desktop Agent
   const connectToMcp = async () => {
     try {
-      addLog(`🔌 Conectando ao MCP Server: ${mcpServerUrl}`);
+      addLog(`🔍 Procurando Desktop Agent...`);
+      setIsMcpConnected(false);
+      setAvailableTools([]);
+      setMcpMode("none");
 
       const response = await fetch("/api/mcp/playwright-hybrid", {
         method: "POST",
@@ -100,16 +59,32 @@ export default function PlaywrightHybridPage() {
       if (data.success) {
         setIsMcpConnected(true);
         setAvailableTools(data.tools || []);
-        setMcpMode(data.message?.includes("mock") ? "mock" : "real");
-        addLog(`✅ Conectado ao MCP! Tools: ${data.tools?.join(", ")}`);
-        addLog(
-          `🔧 Modo: ${data.message?.includes("mock") ? "Mock (Simulação + WebView)" : "Real (Playwright MCP)"}`,
-        );
+        setMcpMode("real");
+        addLog(`✅ ${data.message}`);
+        addLog(`🔧 Tools disponíveis: ${data.tools?.join(", ")}`);
+
+        if (data.agentType === "REAL_DESKTOP_AGENT") {
+          addLog(`🎭 Desktop Agent REAL conectado!`);
+          addLog(`📡 Porta: ${data.agentInfo?.port || "desconhecida"}`);
+          addLog(
+            `🖥️ Navegador: ${data.agentInfo?.playwright || "inicializando"}`,
+          );
+        }
       } else {
-        addLog(`❌ Erro ao conectar: ${data.error}`);
+        setIsMcpConnected(false);
+        addLog(`❌ ${data.error}`);
+
+        if (data.instructions) {
+          addLog(`💡 Instruções:`);
+          data.instructions.forEach((instruction: string, _index: number) => {
+            addLog(`   ${instruction}`);
+          });
+        }
       }
     } catch (error) {
+      setIsMcpConnected(false);
       addLog(`❌ Erro na conexão: ${error}`);
+      addLog(`💡 Certifique-se de que o Desktop Agent está rodando!`);
     }
   };
 
@@ -149,19 +124,31 @@ export default function PlaywrightHybridPage() {
   const hybridTools = {
     navigate: async (url: string) => {
       try {
-        // 1. Atualizar WebView visual
+        // Atualizar URL atual
         setCurrentUrl(url);
-        if (iframeRef.current) {
-          iframeRef.current.src = `/api/proxy?url=${encodeURIComponent(url)}`;
-        }
-        addLog(`🌐 WebView navegando para: ${url}`);
+        addLog(`🌐 Abrindo navegador e navegando para: ${url}`);
 
-        // 2. Executar no Playwright MCP real
         if (isMcpConnected) {
-          await executeMcpCommand("browser_navigate", { url });
-          return `✅ Navegou para: ${url} (WebView + MCP)`;
+          // Executar no Desktop Agent (navegador real)
+          addLog(`🔍 Verificando se navegador está aberto...`);
+          const mcpResult = await executeMcpCommand("browser_navigate", {
+            url,
+          });
+
+          if (mcpResult && mcpResult.success) {
+            addLog(`✅ Navegador aberto e navegação executada`);
+            setIsBrowserReady(true);
+          } else {
+            addLog(
+              `⚠️ Possível problema: ${mcpResult.error || "Navegador pode não estar aberto"}`,
+            );
+          }
+
+          return mcpResult.error
+            ? `❌ ${mcpResult.error}`
+            : `✅ Navegador aberto em: ${url}`;
         } else {
-          return `✅ Navegou para: ${url} (apenas WebView)`;
+          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
         }
       } catch (error) {
         const errorMsg = `❌ Erro ao navegar: ${error}`;
@@ -175,33 +162,20 @@ export default function PlaywrightHybridPage() {
         addLog(`🖱️ Clicando em: ${selector}`);
 
         if (isMcpConnected) {
-          // Executar no MCP (real ou mock)
+          // Executar no MCP (navegador real)
           const mcpResult = await executeMcpCommand("browser_click", {
             selector,
           });
 
-          // Se for modo mock, executar também no WebView para sincronizar
           if (mcpResult && mcpResult.success) {
-            try {
-              addLog(`🔄 Tentando sincronizar clique com WebView...`);
-              const webViewResult = await executeCommandInWebView(
-                "click",
-                selector,
-              );
-              addLog(
-                `✅ WebView Click Result: ${JSON.stringify(webViewResult)}`,
-              );
-              addLog(`🔄 Sincronizado com WebView`);
-            } catch (webViewError) {
-              addLog(`⚠️ Erro na sincronização WebView: ${webViewError}`);
-            }
+            addLog(`✅ Clique executado no navegador real`);
           }
 
           return mcpResult.error
             ? `❌ ${mcpResult.error}`
-            : `✅ Clicou em: ${selector} (MCP + WebView)`;
+            : `✅ Clicou em: ${selector} (Navegador Real)`;
         } else {
-          return `❌ MCP não conectado. Use apenas WebView ou conecte ao servidor.`;
+          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
         }
       } catch (error) {
         const errorMsg = `❌ Erro ao clicar: ${error}`;
@@ -215,33 +189,21 @@ export default function PlaywrightHybridPage() {
         addLog(`⌨️ Digitando "${text}" em: ${selector}`);
 
         if (isMcpConnected) {
-          // Executar no MCP (real ou mock)
+          // Executar no MCP (navegador real)
           const mcpResult = await executeMcpCommand("browser_type", {
             selector,
             text,
           });
 
-          // Se for modo mock, executar também no WebView para sincronizar
           if (mcpResult && mcpResult.success) {
-            try {
-              addLog(`🔄 Tentando sincronizar com WebView...`);
-              const webViewResult = await executeCommandInWebView(
-                "type",
-                selector,
-                text,
-              );
-              addLog(`✅ WebView Result: ${JSON.stringify(webViewResult)}`);
-              addLog(`🔄 Sincronizado com WebView`);
-            } catch (webViewError) {
-              addLog(`⚠️ Erro na sincronização WebView: ${webViewError}`);
-            }
+            addLog(`✅ Texto digitado no navegador real`);
           }
 
           return mcpResult.error
             ? `❌ ${mcpResult.error}`
-            : `✅ Digitou "${text}" em: ${selector} (MCP + WebView)`;
+            : `✅ Digitou "${text}" em: ${selector} (Navegador Real)`;
         } else {
-          return `❌ MCP não conectado. Use apenas WebView ou conecte ao servidor.`;
+          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
         }
       } catch (error) {
         const errorMsg = `❌ Erro ao digitar: ${error}`;
@@ -255,16 +217,16 @@ export default function PlaywrightHybridPage() {
         addLog(`📸 Capturando screenshot...`);
 
         if (isMcpConnected) {
-          // Usar Playwright MCP real
+          // Usar Desktop Agent real
           const mcpResult = await executeMcpCommand("browser_screenshot", {});
 
           if (mcpResult.error) {
             return `❌ ${mcpResult.error}`;
           } else {
-            return `✅ Screenshot capturado pelo Playwright MCP real`;
+            return `✅ Screenshot capturado pelo navegador real`;
           }
         } else {
-          return `❌ MCP não conectado. Screenshot requer Playwright real.`;
+          return `❌ Desktop Agent não conectado. Screenshot requer navegador real.`;
         }
       } catch (error) {
         const errorMsg = `❌ Erro ao capturar screenshot: ${error}`;
@@ -279,11 +241,11 @@ export default function PlaywrightHybridPage() {
           const mcpResult = await executeMcpCommand("browser_get_title", {});
           const title =
             mcpResult.title || mcpResult.result || "Título não encontrado";
-          const message = `📄 Título (MCP Real): "${title}"`;
+          const message = `📄 Título (Navegador Real): "${title}"`;
           addLog(message);
           return message;
         } else {
-          return `❌ MCP não conectado. Use conectar ao servidor primeiro.`;
+          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
         }
       } catch (error) {
         const errorMsg = `❌ Erro ao obter título: ${error}`;
@@ -297,11 +259,11 @@ export default function PlaywrightHybridPage() {
         if (isMcpConnected) {
           const mcpResult = await executeMcpCommand("browser_get_url", {});
           const url = mcpResult.url || mcpResult.result || "URL não encontrada";
-          const message = `🔗 URL (MCP Real): ${url}`;
+          const message = `🔗 URL (Navegador Real): ${url}`;
           addLog(message);
           return message;
         } else {
-          return `❌ MCP não conectado. Use conectar ao servidor primeiro.`;
+          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
         }
       } catch (error) {
         const errorMsg = `❌ Erro ao obter URL: ${error}`;
@@ -332,7 +294,9 @@ export default function PlaywrightHybridPage() {
       if (lowerPrompt.includes("busca") || lowerPrompt.includes("search")) {
         actions.push({
           name: "click",
-          args: ['input[name="q"], input[type="search"], #search'],
+          args: [
+            'textarea[name="q"], input[name="q"], [aria-label*="Pesquisar"], [title*="Pesquisar"]',
+          ],
         });
       } else if (
         lowerPrompt.includes("botão") ||
@@ -354,7 +318,10 @@ export default function PlaywrightHybridPage() {
       const text = textMatch ? textMatch[1] || textMatch[2] : "teste hybrid";
       actions.push({
         name: "type",
-        args: ['input[name="q"], input[type="search"], #search', text],
+        args: [
+          'textarea[name="q"], input[name="q"], [aria-label*="Pesquisar"], [title*="Pesquisar"]',
+          text,
+        ],
       });
     }
 
@@ -408,60 +375,45 @@ export default function PlaywrightHybridPage() {
     setIsLoading(false);
   };
 
-  // Verificar se WebView está pronto
+  // Verificar se Desktop Agent está conectado
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "WEBVIEW_READY") {
-        setIsWebViewReady(true);
-        addLog("✅ WebView está pronto!");
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-
-    // Fallback
-    const timer = setTimeout(() => {
-      if (iframeRef.current?.contentWindow) {
-        setIsWebViewReady(true);
-        addLog("✅ WebView inicializado (fallback)");
-      }
-    }, 3000);
-
-    return () => {
-      window.removeEventListener("message", handleMessage);
-      clearTimeout(timer);
-    };
-  }, []);
+    if (isMcpConnected) {
+      setIsBrowserReady(true);
+      addLog("✅ Desktop Agent conectado - navegador pronto!");
+    } else {
+      setIsBrowserReady(false);
+    }
+  }, [isMcpConnected]);
 
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="mb-8">
         <h1 className="text-3xl font-bold">
-          🎭 Playwright Hybrid (WebView + MCP Real)
+          🎭 Playwright Hybrid (Desktop Agent)
         </h1>
         <p className="text-muted-foreground mt-2">
-          Visualização no WebView + Controle via Playwright MCP Real
+          Controle do navegador local via Desktop Agent
         </p>
       </div>
 
       {/* Status */}
       <div className="grid md:grid-cols-2 gap-4">
         <Card
-          className={`border-2 ${isWebViewReady ? "border-green-200 dark:border-green-800" : "border-yellow-200 dark:border-yellow-800"}`}
+          className={`border-2 ${isBrowserReady ? "border-green-200 dark:border-green-800" : "border-yellow-200 dark:border-yellow-800"}`}
         >
           <CardHeader>
             <CardTitle
-              className={isWebViewReady ? "text-green-600" : "text-yellow-600"}
+              className={isBrowserReady ? "text-green-600" : "text-yellow-600"}
             >
-              {isWebViewReady
-                ? "✅ WebView Pronto"
-                : "⏳ Inicializando WebView"}
+              {isBrowserReady
+                ? "✅ Navegador Pronto"
+                : "⏳ Aguardando Navegador"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <div>🖥️ Visualização embutida</div>
-            <div>📱 Interface responsiva</div>
-            <div>🔄 Sincronização automática</div>
+            <div>🖥️ Chrome/Firefox local</div>
+            <div>📱 Controle via IA</div>
+            <div>🔄 Tempo real</div>
           </CardContent>
         </Card>
 
@@ -488,15 +440,18 @@ export default function PlaywrightHybridPage() {
         </Card>
       </div>
 
-      {/* Configuração MCP */}
+      {/* Configuração Desktop Agent */}
       <Card>
         <CardHeader>
-          <CardTitle>🔌 Configuração MCP Server</CardTitle>
+          <CardTitle>🔌 Conexão Desktop Agent</CardTitle>
+          <CardDescription>
+            Conecte-se ao Desktop Agent rodando no seu computador
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
             <Label htmlFor="mcp-server-url">
-              URL do Servidor MCP Playwright
+              URL do Servidor (opcional - Desktop Agent ignora este campo)
             </Label>
             <Input
               id="mcp-server-url"
@@ -504,6 +459,10 @@ export default function PlaywrightHybridPage() {
               onChange={(e) => setMcpServerUrl(e.target.value)}
               placeholder="http://localhost:3001"
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              ℹ️ O Desktop Agent será detectado automaticamente nas portas 8768
+              ou 8766, independente desta URL
+            </p>
           </div>
 
           <Button
@@ -511,7 +470,7 @@ export default function PlaywrightHybridPage() {
             disabled={isLoading}
             className="bg-blue-600 hover:bg-blue-700"
           >
-            {isMcpConnected ? "🔄 Reconectar" : "🔌 Conectar ao MCP"}
+            {isMcpConnected ? "🔄 Reconectar" : "🔍 Procurar Desktop Agent"}
           </Button>
         </CardContent>
       </Card>
@@ -549,7 +508,7 @@ export default function PlaywrightHybridPage() {
               variant="outline"
               className="border-blue-200 text-blue-600 hover:bg-blue-50"
             >
-              🌐 Navegar WebView
+              🌐 Abrir Navegador
             </Button>
 
             <Button
@@ -579,52 +538,88 @@ export default function PlaywrightHybridPage() {
             <Button
               onClick={async () => {
                 try {
-                  addLog("🧪 Testando WebView direto...");
-                  const result = await executeCommandInWebView("test");
-                  addLog(`✅ Teste WebView: ${JSON.stringify(result)}`);
+                  addLog("🧪 Testando Desktop Agent...");
+                  const result = await hybridTools.getTitle();
+                  addLog(`✅ Teste Desktop Agent: ${result}`);
                 } catch (error) {
-                  addLog(`❌ Erro teste WebView: ${error}`);
+                  addLog(`❌ Erro teste Desktop Agent: ${error}`);
                 }
               }}
               variant="outline"
               className="border-orange-200 text-orange-600 hover:bg-orange-50"
             >
-              🧪 Testar WebView
+              🧪 Testar Desktop Agent
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* WebView */}
+      {/* Status do Navegador Local */}
       <Card>
         <CardHeader>
-          <CardTitle>🖥️ WebView (Visualização)</CardTitle>
+          <CardTitle>🖥️ Navegador Local do Usuário</CardTitle>
           <CardDescription>
-            Browser embutido para visualização - controle via MCP Real
+            O Desktop Agent controla o Chrome/Firefox instalado no seu
+            computador
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="border rounded-lg overflow-hidden bg-white">
-            <div className="bg-gray-100 p-2 text-sm font-mono text-gray-600 border-b flex justify-between">
-              <span>{currentUrl}</span>
-              <span className="text-xs">
-                {isMcpConnected
-                  ? mcpMode === "mock"
-                    ? "🎭 MCP Mock + WebView"
-                    : "🎭 MCP Real"
-                  : "❌ MCP Offline"}
+          <div className="border rounded-lg overflow-hidden bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20">
+            <div className="bg-gray-100 dark:bg-gray-800 p-3 text-sm font-mono text-gray-600 dark:text-gray-300 border-b flex justify-between items-center">
+              <span className="flex items-center gap-2">
+                🌐 <strong>Navegador Real:</strong> {currentUrl}
+              </span>
+              <span className="text-xs px-2 py-1 rounded-full bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300">
+                {isMcpConnected ? "🎭 Desktop Agent Ativo" : "❌ Offline"}
               </span>
             </div>
-            <iframe
-              ref={iframeRef}
-              src={`/api/proxy?url=${encodeURIComponent(currentUrl)}`}
-              className="w-full h-96 border-0"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-              onLoad={() => {
-                setIsWebViewReady(true);
-                addLog("🌐 Página carregada no WebView");
-              }}
-            />
+
+            <div className="p-6 text-center">
+              <div className="mb-4">
+                <div className="text-6xl mb-4">🖥️</div>
+                <h3 className="text-xl font-semibold mb-2">
+                  Navegador Aberto no Seu Computador
+                </h3>
+                <p className="text-gray-600 dark:text-gray-400 mb-4">
+                  Todas as ações acontecem no seu navegador real. Você pode ver
+                  e interagir diretamente!
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
+                  <div className="text-2xl mb-2">👀</div>
+                  <div className="font-semibold">Visualização Real</div>
+                  <div className="text-gray-500">Veja tudo acontecendo</div>
+                </div>
+                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
+                  <div className="text-2xl mb-2">🎮</div>
+                  <div className="font-semibold">Controle Total</div>
+                  <div className="text-gray-500">Via comandos de IA</div>
+                </div>
+                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
+                  <div className="text-2xl mb-2">🔒</div>
+                  <div className="font-semibold">100% Local</div>
+                  <div className="text-gray-500">Dados não saem do PC</div>
+                </div>
+                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
+                  <div className="text-2xl mb-2">⚡</div>
+                  <div className="font-semibold">Performance</div>
+                  <div className="text-gray-500">Velocidade nativa</div>
+                </div>
+              </div>
+
+              {isMcpConnected && (
+                <div className="mt-4 p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-200 dark:border-green-800">
+                  <div className="text-green-700 dark:text-green-300 font-semibold">
+                    ✅ Desktop Agent Conectado!
+                  </div>
+                  <div className="text-green-600 dark:text-green-400 text-sm">
+                    Seu navegador está pronto para receber comandos
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -666,29 +661,28 @@ export default function PlaywrightHybridPage() {
       <Card className="border-purple-200 dark:border-purple-800">
         <CardHeader>
           <CardTitle className="text-purple-600">
-            ✨ Vantagens do Hybrid
+            ✨ Vantagens do Desktop Agent
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p>
-            🎭 <strong>Playwright Real:</strong> Engine completo via MCP
+            🎭 <strong>Playwright Real:</strong> Engine completo no seu PC
           </p>
           <p>
-            🖥️ <strong>Visualização:</strong> WebView embutido para feedback
+            🖥️ <strong>Navegador Local:</strong> Chrome/Firefox do usuário
           </p>
           <p>
-            🔄 <strong>Sincronização:</strong> WebView atualiza após comandos
-            MCP
+            👀 <strong>Visualização Direta:</strong> Veja tudo acontecendo em
+            tempo real
           </p>
           <p>
-            🚫 <strong>Sem instalação:</strong> Cliente não precisa instalar
-            nada
+            🔒 <strong>100% Local:</strong> Dados não saem do seu computador
           </p>
           <p>
-            🌐 <strong>HTTP Transport:</strong> MCP via API, não stdio
+            ⚡ <strong>Performance Nativa:</strong> Velocidade máxima
           </p>
           <p>
-            ⚡ <strong>Melhor dos mundos:</strong> Visual + Poder real
+            🌐 <strong>HTTP API:</strong> Comunicação simples e confiável
           </p>
         </CardContent>
       </Card>

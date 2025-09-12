@@ -36,87 +36,107 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleConnect(serverUrl: string) {
+async function handleConnect(_serverUrl: string) {
   try {
-    console.log("Tentando conectar ao MCP Server:", serverUrl);
+    console.log("🔍 Tentando conectar ao Desktop Agent...");
 
-    // Tentar conectar via HTTP ao servidor MCP
-    const response = await fetch(`${serverUrl}/mcp/tools`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    // 🎭 PRIORIDADE 1: Tentar Desktop Agent local APENAS
+    const ports = [8768, 8766]; // Nova porta primeiro, depois a antiga
+    let desktopAgentResponse: Response | null = null;
+    let workingPort: number | null = null;
 
-    if (!response.ok) {
-      // Se não conseguir via HTTP, tentar mock para desenvolvimento
-      console.log(
-        "Servidor MCP não disponível, usando mock para desenvolvimento",
-      );
+    for (const port of ports) {
+      try {
+        console.log(`🔍 Testando porta ${port}...`);
+        desktopAgentResponse = await fetch(`http://localhost:${port}/status`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+          // Timeout rápido para não travar
+          signal: AbortSignal.timeout(3000),
+        });
 
-      const mockTools = [
-        "browser_navigate",
-        "browser_click",
-        "browser_type",
-        "browser_screenshot",
-        "browser_get_title",
-        "browser_get_url",
-      ];
+        if (desktopAgentResponse.ok) {
+          const agentStatus = await desktopAgentResponse.json();
 
-      mcpConnections.set("default", {
-        type: "mock",
-        serverUrl,
-        tools: mockTools,
-        connected: true,
-      });
+          // VALIDAÇÃO REAL: verificar se é realmente o Desktop Agent
+          if (
+            agentStatus.agent &&
+            (agentStatus.agent.includes("desktop") ||
+              agentStatus.agent.includes("standalone"))
+          ) {
+            workingPort = port;
+            console.log(
+              `✅ Desktop Agent REAL encontrado na porta ${workingPort}:`,
+              agentStatus,
+            );
 
-      return NextResponse.json({
-        success: true,
-        tools: mockTools,
-        message: "Conectado em modo mock (servidor MCP não disponível)",
-      });
+            // VALIDAÇÃO SIMPLIFICADA: Se responde ao status, consideramos válido
+            console.log(
+              `✅ Desktop Agent na porta ${port} está respondendo ao status - considerando válido!`,
+            );
+
+            const tools = [
+              "browser_navigate",
+              "browser_click",
+              "browser_type",
+              "browser_screenshot",
+              "browser_get_title",
+              "browser_get_url",
+            ];
+
+            mcpConnections.set("default", {
+              type: "desktop-agent",
+              serverUrl: `http://localhost:${workingPort}`,
+              tools,
+              connected: true,
+              agentStatus,
+            });
+
+            return NextResponse.json({
+              success: true,
+              tools: tools,
+              message: `🎭 DESKTOP AGENT REAL conectado (porta ${workingPort}) - Navegador no cliente!`,
+              agentInfo: agentStatus,
+              agentType: "REAL_DESKTOP_AGENT",
+            });
+          } else {
+            console.log(
+              `❌ Porta ${port} não é um Desktop Agent válido:`,
+              agentStatus,
+            );
+          }
+        }
+      } catch (portError) {
+        console.log(`❌ Erro ao conectar na porta ${port}:`, portError);
+        continue;
+      }
     }
 
-    const data = await response.json();
-    const tools = data.tools || [];
-
-    // Armazenar conexão
-    mcpConnections.set("default", {
-      type: "http",
-      serverUrl,
-      tools,
-      connected: true,
-    });
+    // Se chegou aqui, não encontrou Desktop Agent
+    console.log("❌ DESKTOP AGENT NÃO ENCONTRADO!");
+    console.log("💡 Para usar o Desktop Agent:");
+    console.log("   1. Execute: cd desktop-agent");
+    console.log("   2. Execute: start-desktop-agent.bat");
+    console.log("   3. Aguarde ver as mensagens de inicialização");
+    console.log("   4. Tente conectar novamente");
 
     return NextResponse.json({
-      success: true,
-      tools: tools,
-      message: "Conectado ao servidor MCP via HTTP",
+      success: false,
+      error:
+        "Desktop Agent não encontrado. Execute 'start-desktop-agent.bat' primeiro.",
+      instructions: [
+        "1. Abra o terminal na pasta 'desktop-agent'",
+        "2. Execute: start-desktop-agent.bat",
+        "3. Aguarde as mensagens de inicialização",
+        "4. Tente conectar novamente",
+      ],
     });
   } catch (error) {
-    console.error("Erro ao conectar:", error);
-
-    // Fallback para mock em caso de erro
-    const mockTools = [
-      "browser_navigate",
-      "browser_click",
-      "browser_type",
-      "browser_screenshot",
-      "browser_get_title",
-      "browser_get_url",
-    ];
-
-    mcpConnections.set("default", {
-      type: "mock",
-      serverUrl,
-      tools: mockTools,
-      connected: true,
-    });
+    console.error("❌ Erro ao conectar:", error);
 
     return NextResponse.json({
-      success: true,
-      tools: mockTools,
-      message: "Conectado em modo mock (erro na conexão real)",
+      success: false,
+      error: `Erro na conexão: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
 }
@@ -134,7 +154,34 @@ async function handleExecute(toolName: string, args: any) {
 
     console.log(`Executando tool: ${toolName} com args:`, args);
 
-    if (connection.type === "mock") {
+    if (connection.type === "desktop-agent") {
+      // 🎭 Executar no Desktop Agent local REAL
+      const agentUrl = `${connection.serverUrl}/playwright/${toolName.replace("browser_", "")}`;
+
+      console.log(`🚀 EXECUTANDO NO DESKTOP AGENT REAL: ${agentUrl}`);
+      console.log(`📝 Dados enviados:`, args);
+
+      const response = await fetch(agentUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(args),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro Desktop Agent: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`✅ RESPOSTA DO DESKTOP AGENT:`, data);
+
+      return NextResponse.json({
+        success: true,
+        result: data,
+        source: "REAL_DESKTOP_AGENT",
+      });
+    } else if (connection.type === "mock") {
       // Simular execução para desenvolvimento
       return await handleMockExecution(toolName, args);
     } else {
