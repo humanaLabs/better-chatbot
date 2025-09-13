@@ -205,11 +205,11 @@ export default function PlaywrightHybridPage() {
     }
 
     if (lowerCommand.includes("título")) {
-      return await executeBrowserAction("getTitle", {});
+      return await executeBrowserAction("get_title", {});
     }
 
     if (lowerCommand.includes("url")) {
-      return await executeBrowserAction("getUrl", {});
+      return await executeBrowserAction("get_url", {});
     }
 
     // Comando não reconhecido

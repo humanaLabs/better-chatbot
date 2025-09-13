@@ -224,7 +224,21 @@ async function handleExecute(toolName: string, args: any) {
 
     if (connection.type === "desktop-agent") {
       // 🎭 Executar no Desktop Agent local REAL
-      const agentUrl = `${connection.serverUrl}/playwright/${toolName.replace("browser_", "")}`;
+      // Mapear nomes de tools para o formato esperado pelo Desktop Agent
+      const toolMapping: Record<string, string> = {
+        browser_navigate: "navigate",
+        browser_click: "click",
+        browser_type: "type",
+        browser_screenshot: "screenshot",
+        browser_get_title: "get_title",
+        browser_get_url: "get_url",
+        browser_getTitle: "get_title", // Compatibilidade camelCase
+        browser_getUrl: "get_url", // Compatibilidade camelCase
+      };
+
+      const mappedAction =
+        toolMapping[toolName] || toolName.replace("browser_", "");
+      const agentUrl = `${connection.serverUrl}/playwright/${mappedAction}`;
 
       console.log(`🚀 EXECUTANDO NO DESKTOP AGENT REAL: ${agentUrl}`);
       console.log(`📝 Dados enviados:`, args);
@@ -239,7 +253,11 @@ async function handleExecute(toolName: string, args: any) {
       });
 
       if (!response.ok) {
-        throw new Error(`Erro Desktop Agent: ${response.status}`);
+        const errorText = await response.text();
+        console.error(`❌ Erro Desktop Agent (${response.status}):`, errorText);
+        throw new Error(
+          `Erro Desktop Agent: ${response.status} - ${errorText}`,
+        );
       }
 
       const data = await response.json();
