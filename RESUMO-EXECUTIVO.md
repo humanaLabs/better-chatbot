@@ -1,7 +1,7 @@
-# 🎯 RESUMO EXECUTIVO - Playwright Hybrid Solution
+# 🎯 RESUMO EXECUTIVO - Playwright Hybrid com Visão Computacional
 
 ## 📋 **O QUE É:**
-Solução que permite uma **aplicação web** (Vercel) controlar o **navegador local** do usuário através de comandos conversacionais estilo ChatGPT.
+Solução que permite uma **aplicação web** (Vercel) controlar o **navegador local** do usuário através de comandos conversacionais estilo ChatGPT, com **sistema de visão computacional** integrado para interpretação visual inteligente.
 
 ---
 
@@ -12,7 +12,9 @@ Solução que permite uma **aplicação web** (Vercel) controlar o **navegador l
 │   WEB APP       │    │   TUNNEL     │    │ DESKTOP AGENT   │
 │   (Vercel)      │◄──►│ (ngrok/etc)  │◄──►│ (Cliente Local) │
 │                 │    │              │    │                 │
-│ Chat Interface  │    │ Expõe porta  │    │ Controla Chrome │
+│ 🧠 GPT-4V       │    │ Expõe porta  │    │ 📸 Screenshot   │
+│ 💬 Chat Interface│    │              │    │ 🎭 Playwright   │
+│ 👁️ Visão AI     │    │              │    │ 🔍 DOM Analysis │
 └─────────────────┘    └──────────────┘    └─────────────────┘
 ```
 
@@ -58,6 +60,7 @@ ESCOLHER-SETUP.bat
 
 ## 💬 **COMANDOS SUPORTADOS:**
 
+### **🎯 Comandos Básicos:**
 | Comando Natural | Ação Técnica | Resultado |
 |----------------|---------------|-----------|
 | **"Abra o Google"** | `navigate(google.com)` | Abre Google |
@@ -66,16 +69,27 @@ ESCOLHER-SETUP.bat
 | **"Capture uma screenshot"** | `screenshot()` | Captura tela |
 | **"Qual é o título?"** | `getTitle()` | Retorna título |
 
+### **🆕 Comandos Avançados com Visão:**
+| Comando Visual | Análise GPT-4V | Resultado |
+|----------------|----------------|-----------|
+| **"Clique no botão azul"** | 🎨 Detecta cor azul na imagem | Clique preciso no botão azul |
+| **"Campo de email no topo"** | 📍 Analisa posição Y < 200px | Input correto identificado |
+| **"Botão grande de enviar"** | 📏 Compara tamanhos visuais | Botão principal, não secundário |
+| **"Link do menu lateral"** | 🗂️ Detecta área de navegação | Link específico do menu |
+| **"Ícone de configurações"** | 🔍 Reconhece ícones visuais | Clique no ícone correto |
+
 ---
 
 ## 📁 **ARQUIVOS PRINCIPAIS:**
 
 ### **Web App:**
-- `src/app/(chat)/playwright-hybrid/page.tsx` - Interface ChatGPT
+- `src/app/(chat)/playwright-hybrid/page.tsx` - Interface ChatGPT + Visão
 - `src/app/api/mcp/playwright-hybrid/route.ts` - API de comunicação
+- `src/app/api/mcp/interpret-visual/route.ts` - 🆕 API de visão GPT-4V
+- `src/lib/visual-interpreter.ts` - 🆕 Interpretador visual
 
 ### **Desktop Agent:**
-- `desktop-agent/src/simple-agent.ts` - Agent principal
+- `desktop-agent/src/simple-agent.ts` - Agent principal + análise visual
 - `desktop-agent/ESCOLHER-SETUP.bat` - Setup automático
 
 ### **Documentação:**

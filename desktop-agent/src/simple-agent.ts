@@ -80,19 +80,95 @@ class SimpleDesktopAgent {
             result = { success: true, url: data.url };
             break;
 
+          case "back":
+            const backReady = await this.ensureBrowserReady();
+            if (!backReady) throw new Error("Navegador não disponível");
+
+            console.log("⬅️ Voltando para página anterior...");
+            await this.page!.goBack();
+            console.log("✅ Voltou para página anterior");
+            result = { success: true, url: this.page!.url() };
+            break;
+
+          case "forward":
+            const forwardReady = await this.ensureBrowserReady();
+            if (!forwardReady) throw new Error("Navegador não disponível");
+
+            console.log("➡️ Avançando para próxima página...");
+            await this.page!.goForward();
+            console.log("✅ Avançou para próxima página");
+            result = { success: true, url: this.page!.url() };
+            break;
+
+          case "refresh":
+            const refreshReady = await this.ensureBrowserReady();
+            if (!refreshReady) throw new Error("Navegador não disponível");
+
+            console.log("🔄 Recarregando página...");
+            await this.page!.reload();
+            console.log("✅ Página recarregada");
+            result = { success: true, url: this.page!.url() };
+            break;
+
           case "click":
             const clickReady = await this.ensureBrowserReady();
             if (!clickReady) throw new Error("Navegador não disponível");
 
-            const clickSelector = await this.findBestSelector(
-              data.intent || "clickable",
-              data.selector,
-            );
-            await this.page!.click(clickSelector);
+            console.log(`🖱️ Comando de clique recebido:`, data);
+            console.log(`🎯 Seletor original: ${data.selector}`);
+            console.log(`🧠 Intent: ${data.intent || "clickable"}`);
+
+            // Se o seletor já é um seletor CSS válido (contém . # [ ou :), usar diretamente
+            let clickSelector = data.selector;
+            if (!data.selector.match(/[.#\[\]:]/)) {
+              // Se é apenas texto, usar findBestSelector
+              clickSelector = await this.findBestSelector(
+                data.intent || "clickable",
+                data.selector,
+              );
+            } else {
+              console.log(`🎯 Usando seletor CSS direto: ${data.selector}`);
+            }
+
+            console.log(`✅ Seletor final escolhido: ${clickSelector}`);
+
+            // Verificar se o elemento existe antes de clicar
+            try {
+              await this.page!.waitForSelector(clickSelector, {
+                timeout: 5000,
+                state: "visible",
+              });
+              console.log(`✅ Elemento encontrado e visível: ${clickSelector}`);
+
+              // Destacar elemento antes de clicar (para debug visual)
+              await this.page!.evaluate((sel) => {
+                const element = document.querySelector(sel);
+                if (element) {
+                  (element as HTMLElement).style.outline = "3px solid red";
+                  (element as HTMLElement).style.backgroundColor = "yellow";
+                  setTimeout(() => {
+                    (element as HTMLElement).style.outline = "";
+                    (element as HTMLElement).style.backgroundColor = "";
+                  }, 3000);
+                }
+              }, clickSelector);
+
+              await this.page!.click(clickSelector);
+              console.log(
+                `✅ Clique executado com sucesso em: ${clickSelector}`,
+              );
+            } catch (error) {
+              console.error(`❌ Erro ao clicar em ${clickSelector}:`, error);
+              throw new Error(
+                `Elemento não encontrado ou não clicável: ${clickSelector}`,
+              );
+            }
+
             result = {
               success: true,
               selector: clickSelector,
               original: data.selector,
+              message: `Clique executado em: ${clickSelector}`,
             };
             break;
 
@@ -134,44 +210,147 @@ class SimpleDesktopAgent {
             const screenshotReady = await this.ensureBrowserReady();
             if (!screenshotReady) throw new Error("Navegador não disponível");
 
-            await this.page!.screenshot({
-              path: "screenshot.png",
+            // Capturar screenshot como buffer e converter para base64
+            const screenshotBuffer = await this.page!.screenshot({
+              type: "png",
+              fullPage: false, // Apenas viewport visível
             });
-            result = { success: true, path: "screenshot.png" };
+            const base64Screenshot = screenshotBuffer.toString("base64");
+
+            result = {
+              success: true,
+              screenshot: base64Screenshot,
+              filename: `screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
+              timestamp: new Date().toISOString(),
+            };
             break;
 
           case "analyze":
             const analyzeReady = await this.ensureBrowserReady();
             if (!analyzeReady) throw new Error("Navegador não disponível");
 
-            // Nova funcionalidade: analisar estrutura da página
+            // Análise completa da página para seleção inteligente
             const pageAnalysis = await this.page!.evaluate(() => {
-              const inputs = Array.from(
-                document.querySelectorAll("input, textarea"),
-              ).map((el) => ({
-                tag: el.tagName.toLowerCase(),
-                type: el.getAttribute("type"),
-                name: el.getAttribute("name"),
-                placeholder: el.getAttribute("placeholder"),
-                ariaLabel: el.getAttribute("aria-label"),
-              }));
+              // Função para gerar seletor único e confiável
+              const generateSelector = (element: Element): string => {
+                const selectors: string[] = [];
 
+                // ID único (prioridade máxima)
+                if (element.id) {
+                  selectors.push(`#${element.id}`);
+                }
+
+                // Nome específico
+                const name = element.getAttribute("name");
+                if (name) {
+                  selectors.push(`[name="${name}"]`);
+                }
+
+                // Tipo específico
+                const type = element.getAttribute("type");
+                if (type) {
+                  selectors.push(
+                    `${element.tagName.toLowerCase()}[type="${type}"]`,
+                  );
+                }
+
+                // Aria-label
+                const ariaLabel = element.getAttribute("aria-label");
+                if (ariaLabel) {
+                  selectors.push(`[aria-label="${ariaLabel}"]`);
+                }
+
+                // Classes úteis (filtrar classes comuns)
+                if (element.className) {
+                  const classes = element.className
+                    .split(" ")
+                    .filter(
+                      (c) =>
+                        c.length > 0 &&
+                        !c.match(/^(btn|button|form|input|field)$/),
+                    )
+                    .slice(0, 2); // Máximo 2 classes
+                  if (classes.length > 0) {
+                    selectors.push(`.${classes.join(".")}`);
+                  }
+                }
+
+                // Fallback: tag + posição
+                if (selectors.length === 0) {
+                  const siblings = Array.from(
+                    element.parentElement?.children || [],
+                  ).filter((el) => el.tagName === element.tagName);
+                  const index = siblings.indexOf(element);
+                  selectors.push(
+                    `${element.tagName.toLowerCase()}:nth-of-type(${index + 1})`,
+                  );
+                }
+
+                return selectors[0] || element.tagName.toLowerCase(); // Usar o melhor seletor
+              };
+
+              // Analisar inputs com detalhes
+              const inputs = Array.from(
+                document.querySelectorAll("input, textarea, select"),
+              )
+                .filter((el) => (el as HTMLElement).offsetParent !== null) // Apenas visíveis
+                .map((el) => ({
+                  tag: el.tagName.toLowerCase(),
+                  type: el.getAttribute("type") || "text",
+                  name: el.getAttribute("name") || "",
+                  placeholder: el.getAttribute("placeholder") || "",
+                  id: el.id || "",
+                  ariaLabel: el.getAttribute("aria-label") || "",
+                  value: (el as HTMLInputElement).value || "",
+                  selector: generateSelector(el),
+                  text: el.textContent?.trim() || "",
+                  required: el.hasAttribute("required"),
+                }));
+
+              // Analisar botões e elementos clicáveis
               const buttons = Array.from(
-                document.querySelectorAll('button, a, [role="button"]'),
-              ).map((el) => ({
-                tag: el.tagName.toLowerCase(),
-                text: el.textContent?.trim().substring(0, 50),
-                href: el.getAttribute("href"),
-                role: el.getAttribute("role"),
-              }));
+                document.querySelectorAll(
+                  'button, input[type="submit"], input[type="button"], a[href], [role="button"], [onclick]',
+                ),
+              )
+                .filter((el) => (el as HTMLElement).offsetParent !== null) // Apenas visíveis
+                .map((el) => ({
+                  tag: el.tagName.toLowerCase(),
+                  text: el.textContent?.trim() || "",
+                  type: el.getAttribute("type") || "button",
+                  id: el.id || "",
+                  href: el.getAttribute("href") || "",
+                  role: el.getAttribute("role") || "",
+                  ariaLabel: el.getAttribute("aria-label") || "",
+                  selector: generateSelector(el),
+                  value: (el as HTMLInputElement).value || "",
+                  className: el.className || "",
+                }));
 
               return {
                 title: document.title,
                 url: window.location.href,
-                inputs: inputs.slice(0, 10), // Limitar a 10
-                buttons: buttons.slice(0, 10),
+                inputs: inputs.slice(0, 15), // Aumentar limite
+                buttons: buttons.slice(0, 15),
+                bodyText: document.body.textContent?.slice(0, 500) || "", // Contexto da página
               };
             });
+            console.log("📊 Análise da página concluída:");
+            console.log(`  - URL: ${pageAnalysis.url}`);
+            console.log(`  - Título: ${pageAnalysis.title}`);
+            console.log(
+              `  - Inputs encontrados: ${pageAnalysis.inputs.length}`,
+            );
+            console.log(
+              `  - Botões encontrados: ${pageAnalysis.buttons.length}`,
+            );
+            console.log("🔘 Lista de botões:");
+            pageAnalysis.buttons.forEach((btn, i) => {
+              console.log(
+                `  ${i + 1}. "${btn.text}" (${btn.tag}) - Seletor: ${btn.selector}`,
+              );
+            });
+
             result = { analysis: pageAnalysis };
             break;
 
@@ -312,6 +491,45 @@ class SimpleDesktopAgent {
                 element.getAttribute("aria-label") ||
                 "",
               type,
+            });
+          });
+        } else if (
+          intentType === "submit" ||
+          intentType === "search-button" ||
+          intentType === "buscar"
+        ) {
+          // Procurar especificamente botões de busca/submit do Google
+          const searchButtons = document.querySelectorAll(
+            'input[name="btnK"], input[name="btnI"], .gNO89b, .RNmpXc, input[type="submit"], button[type="submit"]',
+          );
+          searchButtons.forEach((el, index) => {
+            const element = el as HTMLElement;
+            const text =
+              element.textContent?.trim() ||
+              element.getAttribute("value") ||
+              "";
+            let score = 80; // Score alto para botões de busca
+
+            // Score extra para botões específicos do Google
+            if (element.getAttribute("name") === "btnK") score = 95; // "Pesquisa Google"
+            if (element.getAttribute("name") === "btnI") score = 90; // "Estou com sorte"
+            if (element.classList.contains("gNO89b")) score = 95;
+
+            // Gerar seletor único
+            let selector = element.tagName.toLowerCase();
+            if (element.id) selector = `#${element.id}`;
+            else if (element.getAttribute("name"))
+              selector = `[name="${element.getAttribute("name")}"]`;
+            else if (element.className)
+              selector = `${element.tagName.toLowerCase()}.${element.className.split(" ")[0]}`;
+            else
+              selector = `${element.tagName.toLowerCase()}:nth-of-type(${index + 1})`;
+
+            elements.push({
+              selector: selector,
+              score: score,
+              text: text,
+              type: "search-button",
             });
           });
         } else if (intentType === "clickable" || intentType === "button") {

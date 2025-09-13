@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -22,40 +22,30 @@ interface Message {
   type: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
-  status?: "success" | "error" | "loading";
+  status?: "loading" | "success" | "error";
 }
 
 export default function PlaywrightHybridPage() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputMessage, setInputMessage] = useState("");
-  const [mcpServerUrl, setMcpServerUrl] = useState("");
+  const [inputValue, setInputValue] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showConnectionSetup, setShowConnectionSetup] = useState(true);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [serverUrl, setServerUrl] = useState("http://localhost:8768");
+  const [, setAgentInfo] = useState<any>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  // Adicionar mensagem inicial
   useEffect(() => {
     if (messages.length === 0) {
       addMessage(
         "system",
-        "👋 Olá! Sou seu assistente para controle remoto do navegador. Para começar, conecte-se ao seu Desktop Agent local.",
+        "🎭 Bem-vindo ao Playwright Hybrid! Digite comandos em linguagem natural para controlar o navegador.",
       );
     }
-  }, []);
+  }, [messages.length]);
 
   const addMessage = (
-    type: Message["type"],
+    type: "user" | "assistant" | "system",
     content: string,
-    status?: Message["status"],
+    status?: "loading" | "success" | "error",
   ) => {
     const newMessage: Message = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -67,27 +57,24 @@ export default function PlaywrightHybridPage() {
     setMessages((prev) => [...prev, newMessage]);
   };
 
-  const updateLastMessage = (status: Message["status"], content?: string) => {
-    setMessages((prev) =>
-      prev.map((msg, index) =>
-        index === prev.length - 1
-          ? { ...msg, status, ...(content && { content }) }
-          : msg,
-      ),
-    );
+  const updateLastMessage = (
+    status: "loading" | "success" | "error",
+    content?: string,
+  ) => {
+    setMessages((prev) => {
+      const updated = [...prev];
+      const lastMessage = updated[updated.length - 1];
+      if (lastMessage) {
+        lastMessage.status = status;
+        if (content) lastMessage.content = content;
+      }
+      return updated;
+    });
   };
 
   const connectToDesktopAgent = async () => {
-    if (!mcpServerUrl.trim() && !isConnected) {
-      addMessage(
-        "system",
-        "🔍 Tentando conectar automaticamente ao Desktop Agent local...",
-      );
-    } else if (mcpServerUrl.trim()) {
-      addMessage("system", `🌐 Conectando ao Desktop Agent: ${mcpServerUrl}`);
-    }
-
     setIsLoading(true);
+    addMessage("system", "🔍 Procurando Desktop Agent...", "loading");
 
     try {
       const response = await fetch("/api/mcp/playwright-hybrid", {
@@ -95,29 +82,36 @@ export default function PlaywrightHybridPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "connect",
-          serverUrl: mcpServerUrl.trim() || "http://localhost:3001",
+          serverUrl: serverUrl,
         }),
       });
 
       const data = await response.json();
 
-      if (data.success) {
+      if (data.success && data.agentInfo) {
         setIsConnected(true);
-        setShowConnectionSetup(false);
-        addMessage("system", `✅ ${data.message}`, "success");
+        setAgentInfo(data.agentInfo);
+        updateLastMessage(
+          "success",
+          `✅ 🎭 DESKTOP AGENT REAL conectado (${serverUrl}) - Navegador no cliente!`,
+        );
         addMessage(
           "system",
-          '🎉 Perfeito! Agora você pode controlar seu navegador. Digite comandos como:\n\n• "Abra o Google"\n• "Clique no campo de busca"\n• "Digite \'hello world\'"\n• "Capture uma screenshot"',
+          `🔧 Tools disponíveis: ${data.agentInfo.tools?.join(", ") || "Carregando..."}`,
         );
+        addMessage("system", "🎭 Desktop Agent REAL conectado!");
+        addMessage("system", `📡 Porta: ${data.agentInfo.port || "8768"}`);
+        addMessage(
+          "system",
+          `🖥️ Navegador: ${data.agentInfo.browser || "initialized"}`,
+        );
+        addMessage("system", "✅ Desktop Agent conectado - navegador pronto!");
       } else {
-        addMessage("system", `❌ ${data.error}`, "error");
-        if (data.instructions) {
-          const instructions = data.instructions.join("\n");
-          addMessage("system", `💡 Para resolver:\n\n${instructions}`);
-        }
+        throw new Error(data.error || "Falha na conexão");
       }
     } catch (error) {
-      addMessage("system", `❌ Erro na conexão: ${error}`, "error");
+      updateLastMessage("error", `❌ Erro: ${error}`);
+      setIsConnected(false);
     }
 
     setIsLoading(false);
@@ -130,218 +124,321 @@ export default function PlaywrightHybridPage() {
     }
 
     addMessage("user", command);
-    addMessage("assistant", "Executando comando...", "loading");
+    addMessage("assistant", "🧠 Interpretando comando...", "loading");
 
     try {
-      // Interpretar comando e executar
-      const result = await interpretAndExecute(command);
+      // Usar LLM para interpretar comando inteligentemente
+      const result = await interpretWithLLM(command);
       updateLastMessage("success", result);
     } catch (error) {
       updateLastMessage("error", `❌ Erro: ${error}`);
     }
   };
 
-  const interpretAndExecute = async (command: string): Promise<string> => {
-    const lowerCommand = command.toLowerCase();
+  const interpretWithLLM = async (command: string): Promise<string> => {
+    try {
+      console.log("🧠 Interpretando comando:", command);
 
-    // Detectar tipo de comando
+      // PASSO 1: Obter contexto da página (DOM apenas - simples e confiável)
+      let pageContext: any = null;
+      try {
+        console.log("📄 Analisando DOM da página...");
+        const contextResponse = await fetch("/api/mcp/playwright-hybrid", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "execute",
+            toolName: "browser_analyze",
+            args: {},
+          }),
+        });
+
+        if (contextResponse.ok) {
+          const contextData = await contextResponse.json();
+          if (contextData.success && contextData.result) {
+            pageContext = contextData.result;
+            console.log("✅ Contexto DOM obtido:", {
+              url: pageContext?.url,
+              title: pageContext?.title,
+              inputs: pageContext?.inputs?.length || 0,
+              buttons: pageContext?.buttons?.length || 0,
+            });
+            console.log(
+              "🔘 Botões encontrados na página:",
+              pageContext?.buttons?.map((b) => ({
+                text: b.text,
+                selector: b.selector,
+                tag: b.tag,
+              })),
+            );
+          }
+        }
+      } catch (contextError) {
+        console.warn("⚠️ Falha ao obter contexto DOM:", contextError);
+      }
+
+      // PASSO 2: Interpretar comando com LLM usando contexto DOM
+      console.log("🧠 Interpretando com LLM...");
+      const interpretResponse = await fetch("/api/mcp/interpret-command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: command,
+          pageContext: pageContext,
+        }),
+      });
+
+      if (!interpretResponse.ok) {
+        throw new Error(
+          `Erro na interpretação: ${interpretResponse.status} - ${await interpretResponse.text()}`,
+        );
+      }
+
+      const interpretData = await interpretResponse.json();
+      if (!interpretData.success) {
+        throw new Error(
+          interpretData.error || "Falha na interpretação do comando",
+        );
+      }
+
+      const interpretationResult = interpretData.result;
+      console.log("✅ Comando interpretado:", {
+        toolName: interpretationResult.toolName,
+        args: interpretationResult.args,
+      });
+
+      // PASSO 3: Executar comando interpretado
+      console.log("🎭 Executando comando:", interpretationResult.toolName);
+      const executeResponse = await fetch("/api/mcp/playwright-hybrid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "execute",
+          toolName: interpretationResult.toolName,
+          args: interpretationResult.args,
+        }),
+      });
+
+      if (!executeResponse.ok) {
+        const errorText = await executeResponse.text();
+        throw new Error(
+          `Erro na execução: ${executeResponse.status} - ${errorText}`,
+        );
+      }
+
+      const executeData = await executeResponse.json();
+      if (!executeData.success) {
+        throw new Error(executeData.error || "Falha na execução do comando");
+      }
+
+      console.log("✅ Resultado:", executeData.result);
+
+      // Tratar diferentes tipos de resultado
+      if (executeData.result.message) {
+        return `✅ ${executeData.result.message}`;
+      } else if (executeData.result.title) {
+        return `📄 Título: ${executeData.result.title}`;
+      } else if (executeData.result.url) {
+        return `🔗 URL: ${executeData.result.url}`;
+      } else {
+        return `✅ Comando executado com sucesso`;
+      }
+    } catch (error) {
+      console.error("❌ Erro na interpretação/execução:", error);
+      // Fallback para interpretação simples
+      return await interpretAndExecuteFallback(command);
+    }
+  };
+
+  const interpretAndExecuteFallback = async (
+    command: string,
+  ): Promise<string> => {
+    console.log("🔄 Usando fallback simples para:", command);
+
+    const lowerCommand = command.toLowerCase();
+    let action = "navigate";
+    let args: any = {};
+
+    // Lógica de interpretação simples
     if (
       lowerCommand.includes("abra") ||
       lowerCommand.includes("navegue") ||
-      lowerCommand.includes("vá para")
+      lowerCommand.includes("vá")
     ) {
-      const urlMatch =
-        command.match(/https?:\/\/[^\s]+/) ||
-        command.match(/(google|youtube|facebook|instagram|twitter)\.com/i);
+      const urlMatch = command.match(/https?:\/\/[^\s]+/);
       let url = "https://google.com";
 
       if (urlMatch) {
-        url = urlMatch[0].startsWith("http")
-          ? urlMatch[0]
-          : `https://${urlMatch[0]}`;
-      } else if (lowerCommand.includes("google")) {
-        url = "https://google.com";
-      } else if (lowerCommand.includes("youtube")) {
-        url = "https://youtube.com";
+        url = urlMatch[0];
+      } else {
+        const domainMatch = command.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,})/);
+        if (domainMatch) {
+          url = `https://${domainMatch[0]}`;
+        } else {
+          const siteMatch = command.match(/abra\s+([a-zA-Z0-9.-]+)/i);
+          if (siteMatch) {
+            const siteName = siteMatch[1].toLowerCase();
+            if (!siteName.includes(".")) {
+              url = `https://${siteName}.com`;
+            } else {
+              url = `https://${siteName}`;
+            }
+          }
+        }
       }
 
-      return await executeBrowserAction("navigate", { url });
-    }
-
-    if (lowerCommand.includes("clique")) {
-      let selector = "a, button, input";
-
-      if (lowerCommand.includes("busca") || lowerCommand.includes("pesquisa")) {
-        selector =
-          'input[name="q"], textarea[name="q"], [aria-label*="Pesquisar"]';
-      } else if (
-        lowerCommand.includes("botão") ||
-        lowerCommand.includes("button")
-      ) {
-        selector = 'button, input[type="submit"], [role="button"]';
-      }
-
-      return await executeBrowserAction("click", { selector });
-    }
-
-    if (lowerCommand.includes("digite") || lowerCommand.includes("escreva")) {
-      const textMatch = command.match(
-        /"([^"]+)"|'([^']+)'|digite\s+(.+)|escreva\s+(.+)/i,
-      );
+      action = "navigate";
+      args = { url };
+    } else if (lowerCommand.includes("clique")) {
+      action = "click";
+      args = { selector: 'button, a, input[type="submit"], [role="button"]' };
+    } else if (lowerCommand.includes("digite")) {
+      const textMatch = command.match(/"([^"]+)"|'([^']+)'|digite\s+(.+)/i);
       const text = textMatch
-        ? (textMatch[1] || textMatch[2] || textMatch[3] || textMatch[4]).trim()
+        ? (textMatch[1] || textMatch[2] || textMatch[3]).trim()
         : "hello world";
-      const selector =
-        'input[name="q"], textarea[name="q"], [contenteditable="true"], input[type="text"]';
-
-      return await executeBrowserAction("type", { selector, text });
-    }
-
-    if (
+      action = "type";
+      args = { selector: "input, textarea", text };
+    } else if (
       lowerCommand.includes("screenshot") ||
       lowerCommand.includes("captura")
     ) {
-      return await executeBrowserAction("screenshot", {});
+      action = "screenshot";
+      args = {};
+    } else if (lowerCommand.includes("título")) {
+      action = "get_title";
+      args = {};
+    } else if (lowerCommand.includes("url")) {
+      action = "get_url";
+      args = {};
     }
 
-    if (lowerCommand.includes("título")) {
-      return await executeBrowserAction("get_title", {});
-    }
-
-    if (lowerCommand.includes("url")) {
-      return await executeBrowserAction("get_url", {});
-    }
-
-    // Comando não reconhecido
-    return '🤔 Comando não reconhecido. Tente:\n\n• "Abra o Google"\n• "Clique no campo de busca"\n• "Digite \'sua mensagem\'"\n• "Capture uma screenshot"';
+    return await executeBrowserAction(action, args);
   };
 
   const executeBrowserAction = async (
     action: string,
     args: any,
   ): Promise<string> => {
-    const response = await fetch("/api/mcp/playwright-hybrid", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "execute",
-        toolName: `browser_${action}`,
-        args: args,
-      }),
-    });
+    try {
+      console.log(`🎭 Executando no Playwright MCP: browser_${action}`);
 
-    const data = await response.json();
+      const response = await fetch("/api/mcp/playwright-hybrid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "execute",
+          toolName: `browser_${action}`,
+          args: args,
+        }),
+      });
 
-    if (data.success) {
-      const result = data.result;
-
-      if (action === "navigate") {
-        return `✅ Navegador aberto em: ${args.url}`;
-      } else if (action === "click") {
-        return `✅ Clique executado no elemento`;
-      } else if (action === "type") {
-        return `✅ Texto "${args.text}" digitado com sucesso`;
-      } else if (action === "screenshot") {
-        return `✅ Screenshot capturado com sucesso`;
-      } else if (action === "getTitle") {
-        return `📄 Título da página: "${result.title || result.result || "Não encontrado"}"`;
-      } else if (action === "getUrl") {
-        return `🔗 URL atual: ${result.url || result.result || "Não encontrada"}`;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       }
 
-      return `✅ Comando executado com sucesso`;
-    } else {
-      throw new Error(data.error || "Erro desconhecido");
+      const result = await response.json();
+      console.log("✅ MCP Result:", result);
+
+      if (!result.success) {
+        throw new Error(result.error || "Comando falhou");
+      }
+
+      // Tratar diferentes tipos de resposta
+      if (action === "get_title") {
+        const title =
+          result.result?.title || result.result?.result?.title || result.result;
+        return `📄 Título da página: ${title}`;
+      } else if (action === "get_url") {
+        const url =
+          result.result?.url || result.result?.result?.url || result.result;
+        return `🔗 URL atual: ${url}`;
+      } else if (action === "screenshot") {
+        if (result.result.screenshot) {
+          const base64Data = result.result.screenshot;
+          const filename =
+            result.result.filename || `screenshot-${Date.now()}.png`;
+
+          // Criar download do screenshot
+          const link = document.createElement("a");
+          link.href = `data:image/png;base64,${base64Data}`;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          return `✅ Screenshot capturado e baixado: ${filename}`;
+        }
+        return `✅ Screenshot capturado`;
+      } else {
+        return `✅ ${result.result?.message || "Comando executado com sucesso"}`;
+      }
+    } catch (error) {
+      console.error("❌ Erro na execução:", error);
+      throw error;
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim()) return;
-
-    executeCommand(inputMessage.trim());
-    setInputMessage("");
+    if (inputValue.trim() && !isLoading) {
+      executeCommand(inputValue.trim());
+      setInputValue("");
+    }
   };
 
   const getMessageIcon = (message: Message) => {
-    if (message.type === "user") return <User className="w-6 h-6" />;
-    if (message.type === "system") return <Bot className="w-6 h-6" />;
-    return <Globe className="w-6 h-6" />;
+    if (message.type === "user") return <User className="w-4 h-4" />;
+    if (message.type === "system") {
+      if (message.status === "loading")
+        return <Loader2 className="w-4 h-4 animate-spin" />;
+      if (message.status === "error")
+        return <AlertCircle className="w-4 h-4 text-red-500" />;
+      if (message.status === "success")
+        return <CheckCircle className="w-4 h-4 text-green-500" />;
+      return <Zap className="w-4 h-4" />;
+    }
+    return <Bot className="w-4 h-4" />;
   };
 
-  const getStatusIcon = (status?: Message["status"]) => {
-    if (status === "loading")
-      return <Loader2 className="w-4 h-4 animate-spin" />;
-    if (status === "success")
-      return <CheckCircle className="w-4 h-4 text-green-500" />;
-    if (status === "error")
-      return <AlertCircle className="w-4 h-4 text-red-500" />;
+  const getMessageBadge = (message: Message) => {
+    if (message.status === "loading")
+      return <Badge variant="secondary">Processando...</Badge>;
+    if (message.status === "error")
+      return <Badge variant="destructive">Erro</Badge>;
+    if (message.status === "success")
+      return <Badge variant="default">Sucesso</Badge>;
     return null;
   };
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto">
+    <div className="flex flex-col h-screen max-w-4xl mx-auto p-4">
       {/* Header */}
-      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-10">
-        <div className="flex items-center justify-between p-4">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Monitor className="w-6 h-6" />
-              <h1 className="text-xl font-semibold">
-                Controle Remoto do Navegador
-              </h1>
-            </div>
-            <Badge
-              variant={isConnected ? "default" : "secondary"}
-              className="flex items-center gap-1"
-            >
-              {isConnected ? (
-                <>
-                  <CheckCircle className="w-3 h-3" />
-                  Conectado
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-3 h-3" />
-                  Desconectado
-                </>
-              )}
-            </Badge>
+      <div className="flex-shrink-0 mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Globe className="w-6 h-6" />
+            <h1 className="text-2xl font-bold">Playwright Hybrid</h1>
+            {isConnected && (
+              <Badge variant="default" className="bg-green-500">
+                <Monitor className="w-3 h-3 mr-1" />
+                Conectado
+              </Badge>
+            )}
           </div>
-
-          {!isConnected && (
-            <Button
-              onClick={() => setShowConnectionSetup(!showConnectionSetup)}
-              variant="outline"
-              size="sm"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              Conectar
-            </Button>
-          )}
         </div>
 
-        {/* Connection Setup */}
-        {showConnectionSetup && !isConnected && (
-          <div className="border-t p-4 bg-muted/50">
-            <div className="flex items-center gap-2 mb-3">
-              <Globe className="w-4 h-4" />
-              <span className="text-sm font-medium">
-                Configuração de Conexão
-              </span>
-            </div>
+        {/* Connection Panel */}
+        {!isConnected && (
+          <Card className="p-4 mb-4">
             <div className="flex gap-2">
               <Input
-                placeholder="https://abc123.ngrok-free.app/ (opcional)"
-                value={mcpServerUrl}
-                onChange={(e) => setMcpServerUrl(e.target.value)}
+                placeholder="URL do Desktop Agent (ex: http://localhost:8768)"
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
                 className="flex-1"
               />
-              <Button
-                onClick={connectToDesktopAgent}
-                disabled={isLoading}
-                className="shrink-0"
-              >
+              <Button onClick={connectToDesktopAgent} disabled={isLoading}>
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
@@ -349,109 +446,75 @@ export default function PlaywrightHybridPage() {
                 )}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              💡 Deixe vazio para conectar automaticamente ao Desktop Agent
-              local (localhost:8768)
-            </p>
-          </div>
+          </Card>
         )}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto mb-4 space-y-4">
         {messages.map((message) => (
-          <div key={message.id} className="flex gap-3">
+          <div
+            key={message.id}
+            className={`flex gap-3 ${
+              message.type === "user" ? "justify-end" : "justify-start"
+            }`}
+          >
             <div
-              className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                message.type === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
+              className={`flex gap-3 max-w-[80%] ${
+                message.type === "user" ? "flex-row-reverse" : "flex-row"
               }`}
             >
-              {getMessageIcon(message)}
-            </div>
-
-            <div className="flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">
-                  {message.type === "user"
-                    ? "Você"
-                    : message.type === "system"
-                      ? "Sistema"
-                      : "Assistente"}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {message.timestamp.toLocaleTimeString()}
-                </span>
-                {getStatusIcon(message.status)}
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                {getMessageIcon(message)}
               </div>
-
-              <Card className="p-3">
-                <div className="whitespace-pre-wrap text-sm">
+              <div
+                className={`rounded-lg p-3 ${
+                  message.type === "user"
+                    ? "bg-primary text-primary-foreground"
+                    : message.type === "system"
+                      ? "bg-muted"
+                      : "bg-secondary"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-medium">
+                    {message.type === "user"
+                      ? "Você"
+                      : message.type === "system"
+                        ? "Sistema"
+                        : "Assistente"}
+                  </span>
+                  {getMessageBadge(message)}
+                </div>
+                <div className="text-sm whitespace-pre-wrap">
                   {message.content}
                 </div>
-              </Card>
+                <div className="text-xs opacity-70 mt-1">
+                  {message.timestamp.toLocaleTimeString()}
+                </div>
+              </div>
             </div>
           </div>
         ))}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
-      <div className="border-t p-4">
+      <div className="flex-shrink-0">
         <form onSubmit={handleSubmit} className="flex gap-2">
           <Input
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            placeholder={
-              isConnected
-                ? "Digite um comando... (ex: 'Abra o Google')"
-                : "Conecte-se primeiro ao Desktop Agent"
-            }
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            placeholder="Digite um comando... (ex: 'Abra o Google')"
             disabled={!isConnected || isLoading}
             className="flex-1"
           />
           <Button
             type="submit"
-            disabled={!isConnected || !inputMessage.trim() || isLoading}
-            size="icon"
+            disabled={!isConnected || isLoading || !inputValue.trim()}
           >
             <Send className="w-4 h-4" />
           </Button>
         </form>
-
-        {isConnected && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setInputMessage("Abra o Google")}
-            >
-              Abra o Google
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setInputMessage("Clique no campo de busca")}
-            >
-              Clique no campo de busca
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setInputMessage("Capture uma screenshot")}
-            >
-              Screenshot
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setInputMessage("Qual é o título da página?")}
-            >
-              Título da página
-            </Button>
-          </div>
-        )}
       </div>
     </div>
   );

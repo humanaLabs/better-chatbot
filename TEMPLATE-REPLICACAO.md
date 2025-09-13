@@ -1,4 +1,10 @@
-# 🔄 Template de Replicação - Playwright Hybrid
+# 🔄 Template de Replicação - Playwright Hybrid com Visão Computacional
+
+## 🆕 **SISTEMA DE VISÃO INTEGRADO**
+- **👁️ GPT-4V**: Análise visual de screenshots
+- **🧠 LLM Integration**: Vercel AI SDK v5
+- **📍 Coordenadas**: Posição exata dos elementos  
+- **🎨 Contexto Visual**: Cores, tamanhos, layout
 
 ## 📋 Checklist para Implementar em Nova Aplicação
 
@@ -96,7 +102,7 @@ nova-aplicacao/
 
 #### `src/app/(chat)/playwright-hybrid/page.tsx`
 
-**🎨 Nova Interface Estilo ChatGPT - Conversacional**
+**🎨 Nova Interface Estilo ChatGPT - Conversacional + Visão**
 
 ```typescript
 // ✅ COPIAR ARQUIVO COMPLETO da implementação atual
@@ -140,6 +146,42 @@ import { Badge } from "@/components/ui/badge";
 - **📱 Moderna**: Design limpo inspirado no ChatGPT
 - **⚡ Intuitiva**: Botões de comando rápido para ações comuns
 - **📊 Visual**: Status de conexão claro com badges e ícones
+
+### 🎯 Passo 4.1: 🆕 Sistema de Visão Computacional
+
+#### `src/lib/visual-interpreter.ts`
+```typescript
+// ✅ COPIAR ARQUIVO COMPLETO da implementação atual
+
+// 🧠 CARACTERÍSTICAS DO SISTEMA DE VISÃO:
+// - GPT-4V para análise de screenshots
+// - Interpretação visual + DOM combinada
+// - Fallback robusto para análise DOM
+// - Coordenadas precisas dos elementos
+
+// 🔧 DEPENDÊNCIAS NECESSÁRIAS:
+import { openai } from "@ai-sdk/openai";
+import { generateText } from "ai";
+
+// ⚠️ CONFIGURAÇÃO OBRIGATÓRIA:
+// - OPENAI_API_KEY no .env.local
+// - Vercel AI SDK v5 instalado
+```
+
+#### `src/app/api/mcp/interpret-visual/route.ts`
+```typescript
+// ✅ COPIAR ARQUIVO COMPLETO da implementação atual
+
+// 🎯 FUNCIONALIDADES:
+// - Recebe comando + dados visuais (screenshot + DOM)
+// - Chama GPT-4V para interpretação visual
+// - Converte resultado para formato Desktop Agent
+// - Fallback automático se GPT-4V falhar
+
+// 📊 ENDPOINT: POST /api/mcp/interpret-visual
+// 📥 INPUT: { command: string, visualData: VisualAnalysis }
+// 📤 OUTPUT: { success: boolean, result: AgentFormat, reasoning: string }
+```
 
 ### 🎯 Passo 5: Scripts do Cliente
 

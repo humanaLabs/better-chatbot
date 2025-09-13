@@ -1,8 +1,24 @@
-# 🎭 Solução Playwright Hybrid com Tunnel - Documentação Completa
+# 🎭 Solução Playwright Hybrid com Visão Computacional - Documentação Completa
 
 ## 📋 Visão Geral
 
-Esta solução permite controlar o navegador local do usuário através de uma aplicação web remota, usando um **Desktop Agent** local conectado via **tunnel público** (ngrok/cloudflare).
+Esta solução permite controlar o navegador local do usuário através de uma aplicação web remota, usando um **Desktop Agent** local conectado via **tunnel público** (ngrok/cloudflare) com **sistema de visão computacional** integrado.
+
+## 🆕 **NOVIDADE: Sistema de Visão Computacional**
+
+### **🧠 Interpretação Inteligente de Comandos**
+- **👁️ GPT-4V**: Analisa screenshots da página
+- **🏗️ Análise DOM**: Estrutura + seletores precisos  
+- **📍 Coordenadas**: Posição exata dos elementos
+- **🎨 Contexto Visual**: Cores, tamanhos, layout
+
+### **🎯 Comandos Avançados Suportados:**
+```
+"Clique no botão azul"           → Detecta cor visualmente
+"Campo de email no topo"         → Usa posição Y < 200px  
+"Botão grande de enviar"         → Compara tamanhos
+"Link do menu lateral"           → Identifica área de navegação
+```
 
 ### 🎯 Arquitetura
 
@@ -29,7 +45,114 @@ Web App (Vercel) → Internet → Tunnel (ngrok) → Desktop Agent (Local) → P
 - **Headers especiais** para bypass de avisos
 - **URL dinâmica** ou estática
 
+### 4. **🆕 Sistema de Visão Computacional**
+- **Análise Visual**: `browser_analyze_visual` endpoint
+- **Screenshot + DOM**: Captura imagem + estrutura
+- **GPT-4V Integration**: Interpretação visual inteligente
+- **Fallback Robusto**: DOM analysis se GPT-4V falhar
+
+## 🧠 **Fluxo de Interpretação Visual**
+
+```
+1. 👤 Usuário: "Clique no botão vermelho de login"
+2. 📸 Desktop Agent: Captura screenshot + analisa DOM
+3. 👁️ GPT-4V: Analisa imagem + identifica elemento vermelho
+4. 🎯 Sistema: Gera seletor específico para botão vermelho
+5. 🖱️ Playwright: Executa clique no elemento correto
+6. ✅ Resultado: Ação executada com precisão cirúrgica
+```
+
 ## 🔧 Implementação Detalhada
+
+### **🆕 Sistema de Visão (`analyze_visual`)**
+
+```typescript
+case "analyze_visual":
+  // 1. Capturar screenshot
+  const screenshotBuffer = await this.page!.screenshot({
+    type: 'png',
+    fullPage: false // Apenas viewport visível
+  });
+  const base64Screenshot = screenshotBuffer.toString('base64');
+
+  // 2. Analisar DOM com coordenadas
+  const analysis = await this.page!.evaluate(() => {
+    const elements = Array.from(
+      document.querySelectorAll('button, a, input, textarea, select, [role="button"]')
+    )
+    .filter(el => (el as HTMLElement).offsetParent !== null)
+    .map((el, index) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        index: index + 1,
+        tag: el.tagName.toLowerCase(),
+        text: el.textContent?.trim().slice(0, 50) || '',
+        position: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        },
+        visible: rect.width > 0 && rect.height > 0
+      };
+    });
+
+    return {
+      title: document.title,
+      url: window.location.href,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      elements: elements.filter(el => el.visible)
+    };
+  });
+
+  // 3. Retornar screenshot + análise
+  result = {
+    screenshot: base64Screenshot,
+    analysis: analysis,
+    timestamp: new Date().toISOString()
+  };
+  break;
+```
+
+### **🧠 Interpretador Visual (`src/lib/visual-interpreter.ts`)**
+
+```typescript
+export async function interpretWithVision(
+  userCommand: string,
+  visualData: VisualAnalysis
+): Promise<{
+  action: string;
+  target: string;
+  value?: string;
+  reasoning: string;
+}> {
+  
+  const prompt = `Analise a imagem da página web e execute este comando:
+  
+  COMANDO: "${userCommand}"
+  
+  ELEMENTOS VISÍVEIS:
+  ${visualData.analysis.elements.map(el => 
+    `${el.index}. ${el.tag} "${el.text}" at (${el.position.x},${el.position.y})`
+  ).join('\n')}
+  
+  Retorne JSON: {"action": "click", "target": "seletor", "reasoning": "explicação"}`;
+
+  const result = await generateText({
+    model: openai('gpt-4o'), // GPT-4 com visão
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image', image: `data:image/png;base64,${visualData.screenshot}` }
+      ]
+    }],
+    temperature: 0.1
+  });
+
+  return JSON.parse(result.text);
+}
+```
 
 ### Desktop Agent (`desktop-agent/src/simple-agent.ts`)
 
