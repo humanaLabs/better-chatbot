@@ -1,692 +1,456 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Send,
+  Bot,
+  User,
+  Globe,
+  Monitor,
+  Zap,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
+
+interface Message {
+  id: string;
+  type: "user" | "assistant" | "system";
+  content: string;
+  timestamp: Date;
+  status?: "success" | "error" | "loading";
+}
 
 export default function PlaywrightHybridPage() {
-  const [currentUrl, setCurrentUrl] = useState("https://google.com");
-  const [mcpServerUrl, setMcpServerUrl] = useState("http://localhost:3001");
-  const [testPrompt, setTestPrompt] = useState(
-    "Abra o Google, clique no campo de busca e digite 'playwright hybrid test'",
-  );
-  const [testResult, setTestResult] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [mcpServerUrl, setMcpServerUrl] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [executionLog, setExecutionLog] = useState<string[]>([]);
-  const [isBrowserReady, setIsBrowserReady] = useState(false);
-  const [isMcpConnected, setIsMcpConnected] = useState(false);
-  const [availableTools, setAvailableTools] = useState<string[]>([]);
-  const [, setMcpMode] = useState<"none" | "mock" | "real">("none");
+  const [showConnectionSetup, setShowConnectionSetup] = useState(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Removido: não precisamos mais de iframe
-
-  // Adicionar log
-  const addLog = (message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setExecutionLog((prev) => [...prev, `[${timestamp}] ${message}`]);
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Removido: não precisamos mais de WebView - tudo acontece no navegador real
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
-  // Conectar ao Desktop Agent
-  const connectToMcp = async () => {
+  // Adicionar mensagem inicial
+  useEffect(() => {
+    addMessage(
+      "system",
+      "👋 Olá! Sou seu assistente para controle remoto do navegador. Para começar, conecte-se ao seu Desktop Agent local.",
+    );
+  }, []);
+
+  const addMessage = (
+    type: Message["type"],
+    content: string,
+    status?: Message["status"],
+  ) => {
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      type,
+      content,
+      timestamp: new Date(),
+      status,
+    };
+    setMessages((prev) => [...prev, newMessage]);
+  };
+
+  const updateLastMessage = (status: Message["status"], content?: string) => {
+    setMessages((prev) =>
+      prev.map((msg, index) =>
+        index === prev.length - 1
+          ? { ...msg, status, ...(content && { content }) }
+          : msg,
+      ),
+    );
+  };
+
+  const connectToDesktopAgent = async () => {
+    if (!mcpServerUrl.trim() && !isConnected) {
+      addMessage(
+        "system",
+        "🔍 Tentando conectar automaticamente ao Desktop Agent local...",
+      );
+    } else if (mcpServerUrl.trim()) {
+      addMessage("system", `🌐 Conectando ao Desktop Agent: ${mcpServerUrl}`);
+    }
+
+    setIsLoading(true);
+
     try {
-      addLog(`🔍 Procurando Desktop Agent...`);
-      setIsMcpConnected(false);
-      setAvailableTools([]);
-      setMcpMode("none");
-
       const response = await fetch("/api/mcp/playwright-hybrid", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "connect",
-          serverUrl: mcpServerUrl,
+          serverUrl: mcpServerUrl.trim() || "http://localhost:3001",
         }),
       });
 
       const data = await response.json();
 
       if (data.success) {
-        setIsMcpConnected(true);
-        setAvailableTools(data.tools || []);
-        setMcpMode("real");
-        addLog(`✅ ${data.message}`);
-        addLog(`🔧 Tools disponíveis: ${data.tools?.join(", ")}`);
-
-        if (data.agentType === "REAL_DESKTOP_AGENT") {
-          addLog(`🎭 Desktop Agent REAL conectado!`);
-          addLog(`📡 Porta: ${data.agentInfo?.port || "desconhecida"}`);
-          addLog(
-            `🖥️ Navegador: ${data.agentInfo?.playwright || "inicializando"}`,
-          );
-        }
+        setIsConnected(true);
+        setShowConnectionSetup(false);
+        addMessage("system", `✅ ${data.message}`, "success");
+        addMessage(
+          "system",
+          '🎉 Perfeito! Agora você pode controlar seu navegador. Digite comandos como:\n\n• "Abra o Google"\n• "Clique no campo de busca"\n• "Digite \'hello world\'"\n• "Capture uma screenshot"',
+        );
       } else {
-        setIsMcpConnected(false);
-        addLog(`❌ ${data.error}`);
-
+        addMessage("system", `❌ ${data.error}`, "error");
         if (data.instructions) {
-          addLog(`💡 Instruções:`);
-          data.instructions.forEach((instruction: string, _index: number) => {
-            addLog(`   ${instruction}`);
-          });
+          const instructions = data.instructions.join("\n");
+          addMessage("system", `💡 Para resolver:\n\n${instructions}`);
         }
       }
     } catch (error) {
-      setIsMcpConnected(false);
-      addLog(`❌ Erro na conexão: ${error}`);
-      addLog(`💡 Certifique-se de que o Desktop Agent está rodando!`);
-    }
-  };
-
-  // Executar comando no Playwright MCP real
-  const executeMcpCommand = async (toolName: string, args: any) => {
-    try {
-      addLog(`🎭 Executando no Playwright MCP: ${toolName}`);
-
-      const response = await fetch("/api/mcp/playwright-hybrid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "execute",
-          toolName: toolName,
-          args: args,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        addLog(`✅ MCP Result: ${JSON.stringify(data.result)}`);
-        return data.result;
-      } else {
-        addLog(`❌ MCP Error: ${data.error}`);
-        return { error: data.error };
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      addLog(`❌ Erro na execução MCP: ${errorMessage}`);
-      return { error: errorMessage };
-    }
-  };
-
-  // Ferramentas Hybrid (WebView + MCP)
-  const hybridTools = {
-    navigate: async (url: string) => {
-      try {
-        // Atualizar URL atual
-        setCurrentUrl(url);
-        addLog(`🌐 Abrindo navegador e navegando para: ${url}`);
-
-        if (isMcpConnected) {
-          // Executar no Desktop Agent (navegador real)
-          addLog(`🔍 Verificando se navegador está aberto...`);
-          const mcpResult = await executeMcpCommand("browser_navigate", {
-            url,
-          });
-
-          if (mcpResult && mcpResult.success) {
-            addLog(`✅ Navegador aberto e navegação executada`);
-            setIsBrowserReady(true);
-          } else {
-            addLog(
-              `⚠️ Possível problema: ${mcpResult.error || "Navegador pode não estar aberto"}`,
-            );
-          }
-
-          return mcpResult.error
-            ? `❌ ${mcpResult.error}`
-            : `✅ Navegador aberto em: ${url}`;
-        } else {
-          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
-        }
-      } catch (error) {
-        const errorMsg = `❌ Erro ao navegar: ${error}`;
-        addLog(errorMsg);
-        return errorMsg;
-      }
-    },
-
-    click: async (selector: string) => {
-      try {
-        addLog(`🖱️ Clicando em: ${selector}`);
-
-        if (isMcpConnected) {
-          // Executar no MCP (navegador real)
-          const mcpResult = await executeMcpCommand("browser_click", {
-            selector,
-          });
-
-          if (mcpResult && mcpResult.success) {
-            addLog(`✅ Clique executado no navegador real`);
-          }
-
-          return mcpResult.error
-            ? `❌ ${mcpResult.error}`
-            : `✅ Clicou em: ${selector} (Navegador Real)`;
-        } else {
-          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
-        }
-      } catch (error) {
-        const errorMsg = `❌ Erro ao clicar: ${error}`;
-        addLog(errorMsg);
-        return errorMsg;
-      }
-    },
-
-    type: async (selector: string, text: string) => {
-      try {
-        addLog(`⌨️ Digitando "${text}" em: ${selector}`);
-
-        if (isMcpConnected) {
-          // Executar no MCP (navegador real)
-          const mcpResult = await executeMcpCommand("browser_type", {
-            selector,
-            text,
-          });
-
-          if (mcpResult && mcpResult.success) {
-            addLog(`✅ Texto digitado no navegador real`);
-          }
-
-          return mcpResult.error
-            ? `❌ ${mcpResult.error}`
-            : `✅ Digitou "${text}" em: ${selector} (Navegador Real)`;
-        } else {
-          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
-        }
-      } catch (error) {
-        const errorMsg = `❌ Erro ao digitar: ${error}`;
-        addLog(errorMsg);
-        return errorMsg;
-      }
-    },
-
-    screenshot: async () => {
-      try {
-        addLog(`📸 Capturando screenshot...`);
-
-        if (isMcpConnected) {
-          // Usar Desktop Agent real
-          const mcpResult = await executeMcpCommand("browser_screenshot", {});
-
-          if (mcpResult.error) {
-            return `❌ ${mcpResult.error}`;
-          } else {
-            return `✅ Screenshot capturado pelo navegador real`;
-          }
-        } else {
-          return `❌ Desktop Agent não conectado. Screenshot requer navegador real.`;
-        }
-      } catch (error) {
-        const errorMsg = `❌ Erro ao capturar screenshot: ${error}`;
-        addLog(errorMsg);
-        return errorMsg;
-      }
-    },
-
-    getTitle: async () => {
-      try {
-        if (isMcpConnected) {
-          const mcpResult = await executeMcpCommand("browser_get_title", {});
-          const title =
-            mcpResult.title || mcpResult.result || "Título não encontrado";
-          const message = `📄 Título (Navegador Real): "${title}"`;
-          addLog(message);
-          return message;
-        } else {
-          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
-        }
-      } catch (error) {
-        const errorMsg = `❌ Erro ao obter título: ${error}`;
-        addLog(errorMsg);
-        return errorMsg;
-      }
-    },
-
-    getUrl: async () => {
-      try {
-        if (isMcpConnected) {
-          const mcpResult = await executeMcpCommand("browser_get_url", {});
-          const url = mcpResult.url || mcpResult.result || "URL não encontrada";
-          const message = `🔗 URL (Navegador Real): ${url}`;
-          addLog(message);
-          return message;
-        } else {
-          return `❌ Desktop Agent não conectado. Conecte primeiro.`;
-        }
-      } catch (error) {
-        const errorMsg = `❌ Erro ao obter URL: ${error}`;
-        addLog(errorMsg);
-        return errorMsg;
-      }
-    },
-  };
-
-  // Interpretar prompt e executar ações
-  const parseAndExecutePrompt = async (prompt: string) => {
-    const actions: Array<{ name: string; args: any[] }> = [];
-    const lowerPrompt = prompt.toLowerCase();
-
-    // Detectar navegação
-    const urlMatch = prompt.match(/https?:\/\/[^\s]+/);
-    if (
-      urlMatch ||
-      lowerPrompt.includes("abra") ||
-      lowerPrompt.includes("navegue")
-    ) {
-      const url = urlMatch ? urlMatch[0] : "https://google.com";
-      actions.push({ name: "navigate", args: [url] });
-    }
-
-    // Detectar clique
-    if (lowerPrompt.includes("clique") || lowerPrompt.includes("click")) {
-      if (lowerPrompt.includes("busca") || lowerPrompt.includes("search")) {
-        actions.push({
-          name: "click",
-          args: [
-            'textarea[name="q"], input[name="q"], [aria-label*="Pesquisar"], [title*="Pesquisar"]',
-          ],
-        });
-      } else if (
-        lowerPrompt.includes("botão") ||
-        lowerPrompt.includes("button")
-      ) {
-        actions.push({ name: "click", args: ['button, input[type="submit"]'] });
-      } else {
-        actions.push({ name: "click", args: ["a, button, input"] });
-      }
-    }
-
-    // Detectar digitação
-    if (
-      lowerPrompt.includes("digite") ||
-      lowerPrompt.includes("escreva") ||
-      lowerPrompt.includes("type")
-    ) {
-      const textMatch = prompt.match(/"([^"]+)"|'([^']+)'/);
-      const text = textMatch ? textMatch[1] || textMatch[2] : "teste hybrid";
-      actions.push({
-        name: "type",
-        args: [
-          'textarea[name="q"], input[name="q"], [aria-label*="Pesquisar"], [title*="Pesquisar"]',
-          text,
-        ],
-      });
-    }
-
-    // Detectar informações
-    if (lowerPrompt.includes("título") || lowerPrompt.includes("title")) {
-      actions.push({ name: "getTitle", args: [] });
-    }
-
-    if (lowerPrompt.includes("url") || lowerPrompt.includes("endereço")) {
-      actions.push({ name: "getUrl", args: [] });
-    }
-
-    if (lowerPrompt.includes("screenshot") || lowerPrompt.includes("captura")) {
-      actions.push({ name: "screenshot", args: [] });
-    }
-
-    // Executar ações
-    let results = "";
-    for (const action of actions) {
-      try {
-        const tool = hybridTools[action.name as keyof typeof hybridTools];
-        if (tool) {
-          const result = await (tool as any)(...action.args);
-          results += result + "\\n\\n";
-
-          // Aguardar entre ações
-          if (actions.length > 1) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-          }
-        }
-      } catch (error) {
-        results += `❌ Erro na ação ${action.name}: ${error}\\n\\n`;
-      }
-    }
-
-    return results || "❌ Nenhuma ação reconhecida no prompt";
-  };
-
-  // Executar teste
-  const executeTest = async () => {
-    setIsLoading(true);
-    setTestResult("🚀 Executando teste Hybrid...");
-
-    try {
-      const result = await parseAndExecutePrompt(testPrompt);
-      setTestResult(result);
-    } catch (error) {
-      setTestResult(`❌ Erro no teste: ${error}`);
+      addMessage("system", `❌ Erro na conexão: ${error}`, "error");
     }
 
     setIsLoading(false);
   };
 
-  // Verificar se Desktop Agent está conectado
-  useEffect(() => {
-    if (isMcpConnected) {
-      setIsBrowserReady(true);
-      addLog("✅ Desktop Agent conectado - navegador pronto!");
-    } else {
-      setIsBrowserReady(false);
+  const executeCommand = async (command: string) => {
+    if (!isConnected) {
+      addMessage("system", "❌ Conecte-se ao Desktop Agent primeiro!", "error");
+      return;
     }
-  }, [isMcpConnected]);
+
+    addMessage("user", command);
+    addMessage("assistant", "Executando comando...", "loading");
+
+    try {
+      // Interpretar comando e executar
+      const result = await interpretAndExecute(command);
+      updateLastMessage("success", result);
+    } catch (error) {
+      updateLastMessage("error", `❌ Erro: ${error}`);
+    }
+  };
+
+  const interpretAndExecute = async (command: string): Promise<string> => {
+    const lowerCommand = command.toLowerCase();
+
+    // Detectar tipo de comando
+    if (
+      lowerCommand.includes("abra") ||
+      lowerCommand.includes("navegue") ||
+      lowerCommand.includes("vá para")
+    ) {
+      const urlMatch =
+        command.match(/https?:\/\/[^\s]+/) ||
+        command.match(/(google|youtube|facebook|instagram|twitter)\.com/i);
+      let url = "https://google.com";
+
+      if (urlMatch) {
+        url = urlMatch[0].startsWith("http")
+          ? urlMatch[0]
+          : `https://${urlMatch[0]}`;
+      } else if (lowerCommand.includes("google")) {
+        url = "https://google.com";
+      } else if (lowerCommand.includes("youtube")) {
+        url = "https://youtube.com";
+      }
+
+      return await executeBrowserAction("navigate", { url });
+    }
+
+    if (lowerCommand.includes("clique")) {
+      let selector = "a, button, input";
+
+      if (lowerCommand.includes("busca") || lowerCommand.includes("pesquisa")) {
+        selector =
+          'input[name="q"], textarea[name="q"], [aria-label*="Pesquisar"]';
+      } else if (
+        lowerCommand.includes("botão") ||
+        lowerCommand.includes("button")
+      ) {
+        selector = 'button, input[type="submit"], [role="button"]';
+      }
+
+      return await executeBrowserAction("click", { selector });
+    }
+
+    if (lowerCommand.includes("digite") || lowerCommand.includes("escreva")) {
+      const textMatch = command.match(
+        /"([^"]+)"|'([^']+)'|digite\s+(.+)|escreva\s+(.+)/i,
+      );
+      const text = textMatch
+        ? (textMatch[1] || textMatch[2] || textMatch[3] || textMatch[4]).trim()
+        : "hello world";
+      const selector =
+        'input[name="q"], textarea[name="q"], [contenteditable="true"], input[type="text"]';
+
+      return await executeBrowserAction("type", { selector, text });
+    }
+
+    if (
+      lowerCommand.includes("screenshot") ||
+      lowerCommand.includes("captura")
+    ) {
+      return await executeBrowserAction("screenshot", {});
+    }
+
+    if (lowerCommand.includes("título")) {
+      return await executeBrowserAction("getTitle", {});
+    }
+
+    if (lowerCommand.includes("url")) {
+      return await executeBrowserAction("getUrl", {});
+    }
+
+    // Comando não reconhecido
+    return '🤔 Comando não reconhecido. Tente:\n\n• "Abra o Google"\n• "Clique no campo de busca"\n• "Digite \'sua mensagem\'"\n• "Capture uma screenshot"';
+  };
+
+  const executeBrowserAction = async (
+    action: string,
+    args: any,
+  ): Promise<string> => {
+    const response = await fetch("/api/mcp/playwright-hybrid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "execute",
+        toolName: `browser_${action}`,
+        args: args,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      const result = data.result;
+
+      if (action === "navigate") {
+        return `✅ Navegador aberto em: ${args.url}`;
+      } else if (action === "click") {
+        return `✅ Clique executado no elemento`;
+      } else if (action === "type") {
+        return `✅ Texto "${args.text}" digitado com sucesso`;
+      } else if (action === "screenshot") {
+        return `✅ Screenshot capturado com sucesso`;
+      } else if (action === "getTitle") {
+        return `📄 Título da página: "${result.title || result.result || "Não encontrado"}"`;
+      } else if (action === "getUrl") {
+        return `🔗 URL atual: ${result.url || result.result || "Não encontrada"}`;
+      }
+
+      return `✅ Comando executado com sucesso`;
+    } else {
+      throw new Error(data.error || "Erro desconhecido");
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputMessage.trim()) return;
+
+    executeCommand(inputMessage.trim());
+    setInputMessage("");
+  };
+
+  const getMessageIcon = (message: Message) => {
+    if (message.type === "user") return <User className="w-6 h-6" />;
+    if (message.type === "system") return <Bot className="w-6 h-6" />;
+    return <Globe className="w-6 h-6" />;
+  };
+
+  const getStatusIcon = (status?: Message["status"]) => {
+    if (status === "loading")
+      return <Loader2 className="w-4 h-4 animate-spin" />;
+    if (status === "success")
+      return <CheckCircle className="w-4 h-4 text-green-500" />;
+    if (status === "error")
+      return <AlertCircle className="w-4 h-4 text-red-500" />;
+    return null;
+  };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">
-          🎭 Playwright Hybrid (Desktop Agent)
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Controle do navegador local via Desktop Agent
-        </p>
-      </div>
-
-      {/* Status */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card
-          className={`border-2 ${isBrowserReady ? "border-green-200 dark:border-green-800" : "border-yellow-200 dark:border-yellow-800"}`}
-        >
-          <CardHeader>
-            <CardTitle
-              className={isBrowserReady ? "text-green-600" : "text-yellow-600"}
-            >
-              {isBrowserReady
-                ? "✅ Navegador Pronto"
-                : "⏳ Aguardando Navegador"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div>🖥️ Chrome/Firefox local</div>
-            <div>📱 Controle via IA</div>
-            <div>🔄 Tempo real</div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={`border-2 ${isMcpConnected ? "border-green-200 dark:border-green-800" : "border-red-200 dark:border-red-800"}`}
-        >
-          <CardHeader>
-            <CardTitle
-              className={isMcpConnected ? "text-green-600" : "text-red-600"}
-            >
-              {isMcpConnected ? "✅ MCP Conectado" : "❌ MCP Desconectado"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div>🎭 Playwright Engine Real</div>
-            <div>
-              🔧 Tools:{" "}
-              {availableTools.length > 0
-                ? availableTools.join(", ")
-                : "Nenhuma"}
+    <div className="flex flex-col h-screen max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-10">
+        <div className="flex items-center justify-between p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Monitor className="w-6 h-6" />
+              <h1 className="text-xl font-semibold">
+                Controle Remoto do Navegador
+              </h1>
             </div>
-            <div>🌐 Server: {mcpServerUrl}</div>
-          </CardContent>
-        </Card>
-      </div>
+            <Badge
+              variant={isConnected ? "default" : "secondary"}
+              className="flex items-center gap-1"
+            >
+              {isConnected ? (
+                <>
+                  <CheckCircle className="w-3 h-3" />
+                  Conectado
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-3 h-3" />
+                  Desconectado
+                </>
+              )}
+            </Badge>
+          </div>
 
-      {/* Configuração Desktop Agent */}
-      <Card>
-        <CardHeader>
-          <CardTitle>🔌 Conexão Desktop Agent</CardTitle>
-          <CardDescription>
-            Conecte-se ao Desktop Agent rodando no seu computador
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="mcp-server-url">
-              URL do Servidor (opcional - use para tunnel ou servidor remoto)
-            </Label>
-            <Input
-              id="mcp-server-url"
-              value={mcpServerUrl}
-              onChange={(e) => setMcpServerUrl(e.target.value)}
-              placeholder="https://1c72bdd72f34.ngrok-free.app/"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              ℹ️ Se não especificado, tentará automaticamente localhost:8768 e
-              8766. Para usar tunnel (ngrok/cloudflare), cole a URL completa
-              aqui.
+          {!isConnected && (
+            <Button
+              onClick={() => setShowConnectionSetup(!showConnectionSetup)}
+              variant="outline"
+              size="sm"
+            >
+              <Zap className="w-4 h-4 mr-2" />
+              Conectar
+            </Button>
+          )}
+        </div>
+
+        {/* Connection Setup */}
+        {showConnectionSetup && !isConnected && (
+          <div className="border-t p-4 bg-muted/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Globe className="w-4 h-4" />
+              <span className="text-sm font-medium">
+                Configuração de Conexão
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                placeholder="https://abc123.ngrok-free.app/ (opcional)"
+                value={mcpServerUrl}
+                onChange={(e) => setMcpServerUrl(e.target.value)}
+                className="flex-1"
+              />
+              <Button
+                onClick={connectToDesktopAgent}
+                disabled={isLoading}
+                className="shrink-0"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Conectar"
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              💡 Deixe vazio para conectar automaticamente ao Desktop Agent
+              local (localhost:8768)
             </p>
           </div>
+        )}
+      </div>
 
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((message) => (
+          <div key={message.id} className="flex gap-3">
+            <div
+              className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+                message.type === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted"
+              }`}
+            >
+              {getMessageIcon(message)}
+            </div>
+
+            <div className="flex-1 space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">
+                  {message.type === "user"
+                    ? "Você"
+                    : message.type === "system"
+                      ? "Sistema"
+                      : "Assistente"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {message.timestamp.toLocaleTimeString()}
+                </span>
+                {getStatusIcon(message.status)}
+              </div>
+
+              <Card className="p-3">
+                <div className="whitespace-pre-wrap text-sm">
+                  {message.content}
+                </div>
+              </Card>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="border-t p-4">
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <Input
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            placeholder={
+              isConnected
+                ? "Digite um comando... (ex: 'Abra o Google')"
+                : "Conecte-se primeiro ao Desktop Agent"
+            }
+            disabled={!isConnected || isLoading}
+            className="flex-1"
+          />
           <Button
-            onClick={connectToMcp}
-            disabled={isLoading}
-            className="bg-blue-600 hover:bg-blue-700"
+            type="submit"
+            disabled={!isConnected || !inputMessage.trim() || isLoading}
+            size="icon"
           >
-            {isMcpConnected ? "🔄 Reconectar" : "🔍 Procurar Desktop Agent"}
+            <Send className="w-4 h-4" />
           </Button>
-        </CardContent>
-      </Card>
+        </form>
 
-      {/* Controles */}
-      <Card>
-        <CardHeader>
-          <CardTitle>🎮 Controles Hybrid</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="current-url">URL para WebView</Label>
-            <Input
-              id="current-url"
-              value={currentUrl}
-              onChange={(e) => setCurrentUrl(e.target.value)}
-              placeholder="https://google.com"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="test-prompt">Comando para Executar</Label>
-            <Textarea
-              id="test-prompt"
-              value={testPrompt}
-              onChange={(e) => setTestPrompt(e.target.value)}
-              placeholder="Ex: Abra o Google, clique no campo de busca e digite 'playwright hybrid test'"
-              rows={3}
-            />
-          </div>
-
-          <div className="flex gap-2 flex-wrap">
+        {isConnected && (
+          <div className="flex flex-wrap gap-2 mt-3">
             <Button
-              onClick={() => hybridTools.navigate(currentUrl)}
               variant="outline"
-              className="border-blue-200 text-blue-600 hover:bg-blue-50"
+              size="sm"
+              onClick={() => setInputMessage("Abra o Google")}
             >
-              🌐 Abrir Navegador
+              Abra o Google
             </Button>
-
             <Button
-              onClick={executeTest}
-              disabled={isLoading}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              {isLoading ? "Executando..." : "🚀 Executar Hybrid"}
-            </Button>
-
-            <Button
-              onClick={() => hybridTools.screenshot()}
               variant="outline"
-              disabled={!isMcpConnected}
+              size="sm"
+              onClick={() => setInputMessage("Clique no campo de busca")}
             >
-              📸 Screenshot MCP
+              Clique no campo de busca
             </Button>
-
             <Button
-              onClick={() => hybridTools.getTitle()}
               variant="outline"
-              disabled={!isMcpConnected}
+              size="sm"
+              onClick={() => setInputMessage("Capture uma screenshot")}
             >
-              📄 Título MCP
+              Screenshot
             </Button>
-
             <Button
-              onClick={async () => {
-                try {
-                  addLog("🧪 Testando Desktop Agent...");
-                  const result = await hybridTools.getTitle();
-                  addLog(`✅ Teste Desktop Agent: ${result}`);
-                } catch (error) {
-                  addLog(`❌ Erro teste Desktop Agent: ${error}`);
-                }
-              }}
               variant="outline"
-              className="border-orange-200 text-orange-600 hover:bg-orange-50"
+              size="sm"
+              onClick={() => setInputMessage("Qual é o título da página?")}
             >
-              🧪 Testar Desktop Agent
+              Título da página
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Status do Navegador Local */}
-      <Card>
-        <CardHeader>
-          <CardTitle>🖥️ Navegador Local do Usuário</CardTitle>
-          <CardDescription>
-            O Desktop Agent controla o Chrome/Firefox instalado no seu
-            computador
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="border rounded-lg overflow-hidden bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20">
-            <div className="bg-gray-100 dark:bg-gray-800 p-3 text-sm font-mono text-gray-600 dark:text-gray-300 border-b flex justify-between items-center">
-              <span className="flex items-center gap-2">
-                🌐 <strong>Navegador Real:</strong> {currentUrl}
-              </span>
-              <span className="text-xs px-2 py-1 rounded-full bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300">
-                {isMcpConnected ? "🎭 Desktop Agent Ativo" : "❌ Offline"}
-              </span>
-            </div>
-
-            <div className="p-6 text-center">
-              <div className="mb-4">
-                <div className="text-6xl mb-4">🖥️</div>
-                <h3 className="text-xl font-semibold mb-2">
-                  Navegador Aberto no Seu Computador
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400 mb-4">
-                  Todas as ações acontecem no seu navegador real. Você pode ver
-                  e interagir diretamente!
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
-                  <div className="text-2xl mb-2">👀</div>
-                  <div className="font-semibold">Visualização Real</div>
-                  <div className="text-gray-500">Veja tudo acontecendo</div>
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
-                  <div className="text-2xl mb-2">🎮</div>
-                  <div className="font-semibold">Controle Total</div>
-                  <div className="text-gray-500">Via comandos de IA</div>
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
-                  <div className="text-2xl mb-2">🔒</div>
-                  <div className="font-semibold">100% Local</div>
-                  <div className="text-gray-500">Dados não saem do PC</div>
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border">
-                  <div className="text-2xl mb-2">⚡</div>
-                  <div className="font-semibold">Performance</div>
-                  <div className="text-gray-500">Velocidade nativa</div>
-                </div>
-              </div>
-
-              {isMcpConnected && (
-                <div className="mt-4 p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-200 dark:border-green-800">
-                  <div className="text-green-700 dark:text-green-300 font-semibold">
-                    ✅ Desktop Agent Conectado!
-                  </div>
-                  <div className="text-green-600 dark:text-green-400 text-sm">
-                    Seu navegador está pronto para receber comandos
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Resultado */}
-      {testResult && (
-        <Card>
-          <CardHeader>
-            <CardTitle>📄 Resultado</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Textarea
-              value={testResult}
-              readOnly
-              rows={10}
-              className="font-mono text-sm"
-            />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Log */}
-      {executionLog.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>📋 Log de Execução</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="bg-black text-green-400 p-4 rounded font-mono text-sm max-h-40 overflow-y-auto">
-              {executionLog.map((log, index) => (
-                <div key={index}>{log}</div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Vantagens */}
-      <Card className="border-purple-200 dark:border-purple-800">
-        <CardHeader>
-          <CardTitle className="text-purple-600">
-            ✨ Vantagens do Desktop Agent
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p>
-            🎭 <strong>Playwright Real:</strong> Engine completo no seu PC
-          </p>
-          <p>
-            🖥️ <strong>Navegador Local:</strong> Chrome/Firefox do usuário
-          </p>
-          <p>
-            👀 <strong>Visualização Direta:</strong> Veja tudo acontecendo em
-            tempo real
-          </p>
-          <p>
-            🔒 <strong>100% Local:</strong> Dados não saem do seu computador
-          </p>
-          <p>
-            ⚡ <strong>Performance Nativa:</strong> Velocidade máxima
-          </p>
-          <p>
-            🌐 <strong>HTTP API:</strong> Comunicação simples e confiável
-          </p>
-        </CardContent>
-      </Card>
+        )}
+      </div>
     </div>
   );
 }
