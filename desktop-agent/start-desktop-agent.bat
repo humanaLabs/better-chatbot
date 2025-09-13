@@ -56,10 +56,10 @@ echo.
 echo 🧪 Teste manual: curl http://localhost:8768/status
 echo.
 
-REM Executar o Desktop Agent (usando debug server temporariamente)
-echo 🧪 MODO DEBUG: Usando servidor simulado enquanto corrigimos o Desktop Agent real
+REM Executar o Desktop Agent REAL
+echo 🎭 Iniciando Desktop Agent com Playwright REAL
 echo.
-node debug-server.js
+node dist/simple-agent.js
 
 echo.
 echo 🔍 Se deu erro, verifique:

@@ -36,43 +36,41 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleConnect(_serverUrl: string) {
+async function handleConnect(serverUrl: string) {
   try {
     console.log("🔍 Tentando conectar ao Desktop Agent...");
 
-    // 🎭 PRIORIDADE 1: Tentar Desktop Agent local APENAS
-    const ports = [8768, 8766]; // Nova porta primeiro, depois a antiga
+    // 🎯 PRIORIDADE 1: Usar URL fornecida pelo usuário (se válida)
     let desktopAgentResponse: Response | null = null;
     let workingPort: number | null = null;
+    let finalUrl = "";
 
-    for (const port of ports) {
+    // Verificar se URL personalizada foi fornecida
+    if (serverUrl && serverUrl !== "http://localhost:3001") {
       try {
-        console.log(`🔍 Testando porta ${port}...`);
-        desktopAgentResponse = await fetch(`http://localhost:${port}/status`, {
+        console.log(`🌐 Testando URL personalizada: ${serverUrl}`);
+        desktopAgentResponse = await fetch(`${serverUrl}/status`, {
           method: "GET",
-          headers: { "Content-Type": "application/json" },
-          // Timeout rápido para não travar
-          signal: AbortSignal.timeout(3000),
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
+          signal: AbortSignal.timeout(5000),
         });
 
         if (desktopAgentResponse.ok) {
           const agentStatus = await desktopAgentResponse.json();
 
-          // VALIDAÇÃO REAL: verificar se é realmente o Desktop Agent
+          // Validar se é realmente um Desktop Agent
           if (
             agentStatus.agent &&
             (agentStatus.agent.includes("desktop") ||
-              agentStatus.agent.includes("standalone"))
+              agentStatus.agent.includes("standalone") ||
+              agentStatus.status === "online")
           ) {
-            workingPort = port;
+            finalUrl = serverUrl;
             console.log(
-              `✅ Desktop Agent REAL encontrado na porta ${workingPort}:`,
-              agentStatus,
-            );
-
-            // VALIDAÇÃO SIMPLIFICADA: Se responde ao status, consideramos válido
-            console.log(
-              `✅ Desktop Agent na porta ${port} está respondendo ao status - considerando válido!`,
+              `✅ Desktop Agent encontrado na URL personalizada: ${serverUrl}`,
             );
 
             const tools = [
@@ -86,7 +84,7 @@ async function handleConnect(_serverUrl: string) {
 
             mcpConnections.set("default", {
               type: "desktop-agent",
-              serverUrl: `http://localhost:${workingPort}`,
+              serverUrl: finalUrl,
               tools,
               connected: true,
               agentStatus,
@@ -95,27 +93,97 @@ async function handleConnect(_serverUrl: string) {
             return NextResponse.json({
               success: true,
               tools: tools,
-              message: `🎭 DESKTOP AGENT REAL conectado (porta ${workingPort}) - Navegador no cliente!`,
+              message: `🎭 DESKTOP AGENT REAL conectado (${finalUrl}) - Navegador no cliente!`,
               agentInfo: agentStatus,
               agentType: "REAL_DESKTOP_AGENT",
             });
-          } else {
-            console.log(
-              `❌ Porta ${port} não é um Desktop Agent válido:`,
-              agentStatus,
-            );
           }
         }
-      } catch (portError) {
-        console.log(`❌ Erro ao conectar na porta ${port}:`, portError);
-        continue;
+      } catch (error) {
+        console.log(`❌ URL personalizada falhou: ${error}`);
+      }
+    }
+
+    // 🎭 PRIORIDADE 2: Tentar Desktop Agent local (se URL personalizada falhou)
+    if (!finalUrl) {
+      const ports = [8768, 8766]; // Nova porta primeiro, depois a antiga
+
+      for (const port of ports) {
+        try {
+          console.log(`🔍 Testando porta local ${port}...`);
+          desktopAgentResponse = await fetch(
+            `http://localhost:${port}/status`,
+            {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+              // Timeout rápido para não travar
+              signal: AbortSignal.timeout(3000),
+            },
+          );
+
+          if (desktopAgentResponse.ok) {
+            const agentStatus = await desktopAgentResponse.json();
+
+            // VALIDAÇÃO REAL: verificar se é realmente o Desktop Agent
+            if (
+              agentStatus.agent &&
+              (agentStatus.agent.includes("desktop") ||
+                agentStatus.agent.includes("standalone"))
+            ) {
+              workingPort = port;
+              finalUrl = `http://localhost:${port}`;
+              console.log(
+                `✅ Desktop Agent REAL encontrado na porta ${workingPort}:`,
+                agentStatus,
+              );
+
+              // VALIDAÇÃO SIMPLIFICADA: Se responde ao status, consideramos válido
+              console.log(
+                `✅ Desktop Agent na porta ${port} está respondendo ao status - considerando válido!`,
+              );
+
+              const tools = [
+                "browser_navigate",
+                "browser_click",
+                "browser_type",
+                "browser_screenshot",
+                "browser_get_title",
+                "browser_get_url",
+              ];
+
+              mcpConnections.set("default", {
+                type: "desktop-agent",
+                serverUrl: finalUrl,
+                tools,
+                connected: true,
+                agentStatus,
+              });
+
+              return NextResponse.json({
+                success: true,
+                tools: tools,
+                message: `🎭 DESKTOP AGENT REAL conectado (${finalUrl}) - Navegador no cliente!`,
+                agentInfo: agentStatus,
+                agentType: "REAL_DESKTOP_AGENT",
+              });
+            } else {
+              console.log(
+                `❌ Porta ${port} não é um Desktop Agent válido:`,
+                agentStatus,
+              );
+            }
+          }
+        } catch (portError) {
+          console.log(`❌ Erro ao conectar na porta ${port}:`, portError);
+          continue;
+        }
       }
     }
 
     // Se chegou aqui, não encontrou Desktop Agent
     console.log("❌ DESKTOP AGENT NÃO ENCONTRADO!");
-    console.log("💡 Para usar o Desktop Agent:");
-    console.log("   1. Execute: cd desktop-agent");
+    console.log("💡 Instruções para inicializar:");
+    console.log("   1. Abra o terminal na pasta 'desktop-agent'");
     console.log("   2. Execute: start-desktop-agent.bat");
     console.log("   3. Aguarde ver as mensagens de inicialização");
     console.log("   4. Tente conectar novamente");
@@ -165,6 +233,7 @@ async function handleExecute(toolName: string, args: any) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
         },
         body: JSON.stringify(args),
       });
@@ -190,6 +259,7 @@ async function handleExecute(toolName: string, args: any) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
         },
         body: JSON.stringify({
           tool: toolName,
@@ -221,54 +291,61 @@ async function handleExecute(toolName: string, args: any) {
 }
 
 async function handleMockExecution(toolName: string, args: any) {
-  // Simular respostas do Playwright para desenvolvimento
-  const mockResponses: Record<string, any> = {
-    browser_navigate: {
-      success: true,
-      message: `Navegou para: ${args.url}`,
-      url: args.url,
-    },
-    browser_click: {
-      success: true,
-      message: `Clicou no elemento: ${args.selector}`,
-      selector: args.selector,
-    },
-    browser_type: {
-      success: true,
-      message: `Digitou "${args.text}" no elemento: ${args.selector}`,
-      text: args.text,
-      selector: args.selector,
-    },
-    browser_screenshot: {
-      success: true,
-      message: "Screenshot capturado",
-      path: "/tmp/screenshot.png",
-      timestamp: new Date().toISOString(),
-    },
-    browser_get_title: {
-      success: true,
-      title: "Google",
-      message: "Título obtido com sucesso",
-    },
-    browser_get_url: {
-      success: true,
-      url: "https://www.google.com/",
-      message: "URL obtida com sucesso",
-    },
-  };
+  try {
+    // Simular respostas do Playwright para desenvolvimento
+    const mockResponses: Record<string, any> = {
+      browser_navigate: {
+        success: true,
+        message: `Navegou para: ${args.url}`,
+        url: args.url,
+      },
+      browser_click: {
+        success: true,
+        message: `Clicou no elemento: ${args.selector}`,
+        selector: args.selector,
+      },
+      browser_type: {
+        success: true,
+        message: `Digitou "${args.text}" no elemento: ${args.selector}`,
+        text: args.text,
+        selector: args.selector,
+      },
+      browser_screenshot: {
+        success: true,
+        message: "Screenshot capturado",
+        path: "/tmp/screenshot.png",
+        timestamp: new Date().toISOString(),
+      },
+      browser_get_title: {
+        success: true,
+        title: "Google",
+        message: "Título obtido com sucesso",
+      },
+      browser_get_url: {
+        success: true,
+        url: "https://www.google.com/",
+        message: "URL obtida com sucesso",
+      },
+    };
 
-  const mockResult = mockResponses[toolName] || {
-    success: false,
-    error: `Tool não reconhecida: ${toolName}`,
-  };
+    const mockResult = mockResponses[toolName] || {
+      success: false,
+      error: `Tool não reconhecida: ${toolName}`,
+    };
 
-  // Simular delay de rede
-  await new Promise((resolve) => setTimeout(resolve, 500));
+    // Simular delay de rede
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
-  return NextResponse.json({
-    success: true,
-    result: mockResult,
-  });
+    return NextResponse.json({
+      success: true,
+      result: mockResult,
+    });
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : "Erro no mock",
+    });
+  }
 }
 
 async function handleDisconnect() {

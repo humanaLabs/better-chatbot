@@ -451,17 +451,18 @@ export default function PlaywrightHybridPage() {
         <CardContent className="space-y-4">
           <div>
             <Label htmlFor="mcp-server-url">
-              URL do Servidor (opcional - Desktop Agent ignora este campo)
+              URL do Servidor (opcional - use para tunnel ou servidor remoto)
             </Label>
             <Input
               id="mcp-server-url"
               value={mcpServerUrl}
               onChange={(e) => setMcpServerUrl(e.target.value)}
-              placeholder="http://localhost:3001"
+              placeholder="https://1c72bdd72f34.ngrok-free.app/"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              ℹ️ O Desktop Agent será detectado automaticamente nas portas 8768
-              ou 8766, independente desta URL
+              ℹ️ Se não especificado, tentará automaticamente localhost:8768 e
+              8766. Para usar tunnel (ngrok/cloudflare), cole a URL completa
+              aqui.
             </p>
           </div>
 
