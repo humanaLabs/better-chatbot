@@ -44,10 +44,12 @@ export default function PlaywrightHybridPage() {
 
   // Adicionar mensagem inicial
   useEffect(() => {
-    addMessage(
-      "system",
-      "👋 Olá! Sou seu assistente para controle remoto do navegador. Para começar, conecte-se ao seu Desktop Agent local.",
-    );
+    if (messages.length === 0) {
+      addMessage(
+        "system",
+        "👋 Olá! Sou seu assistente para controle remoto do navegador. Para começar, conecte-se ao seu Desktop Agent local.",
+      );
+    }
   }, []);
 
   const addMessage = (
@@ -56,7 +58,7 @@ export default function PlaywrightHybridPage() {
     status?: Message["status"],
   ) => {
     const newMessage: Message = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type,
       content,
       timestamp: new Date(),
